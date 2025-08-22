@@ -1,0 +1,30 @@
+name: wampshell
+base: core24
+version: git
+summary: Command-line utilities for WAMP Shell
+description: |
+  WAMP Shell is a peer-to-peer and routed shell environment.
+  This snap package provides the command-line utilities for it.
+
+grade: stable
+confinement: strict
+
+parts:
+  wampshell:
+    plugin: go
+    source: .
+    build-snaps:
+      - go
+    build-packages:
+      - git
+
+apps:
+  wsh:
+    command: bin/wsh
+    plugs:
+      - network
+
+  wcp:
+    command: bin/wcp
+    plugs:
+      - network
