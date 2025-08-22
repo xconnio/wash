@@ -1,0 +1,83 @@
+version: "2"
+run:
+  tests: true
+  allow-parallel-runners: false
+output:
+  path-prefix: ""
+linters:
+  default: none
+  enable:
+    - asciicheck
+    - bidichk
+    - contextcheck
+    - decorder
+    - durationcheck
+    - errcheck
+    - errorlint
+    - gochecknoglobals
+    - goconst
+    - godot
+    - gosec
+    - govet
+    - ineffassign
+    - lll
+    - misspell
+    - nakedret
+    - nilerr
+    - staticcheck
+    - testpackage
+    - unconvert
+    - unparam
+    - unused
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - dupl
+          - errcheck
+          - gocyclo
+          - gosec
+        path: _test\.go
+      - linters:
+          - gochecknoglobals
+          - testpackage
+        path: export.*_test\.go
+      - linters:
+          - unparam
+          - unused
+        path: benchmarks/*
+      - linters:
+          - unused
+        path: examples/(serializers|authentications)\.go
+      - linters:
+          - errcheck
+        text: .AbortWithReason
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-same-issues: 0
+  new: false
+formatters:
+  enable:
+    - gci
+    - gofmt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/xconnio)
+      custom-order: true
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
