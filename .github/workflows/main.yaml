@@ -1,0 +1,51 @@
+name: main CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup go
+        uses: actions/setup-go@v3
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+      - run: go version
+
+      - name: Pull in all Go dependencies
+        run: |
+          go mod vendor
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          # version of golangci-lint to use in form of v1.2 or v1.2.3 or `latest`
+          version: latest
+          # skip all additional steps
+          skip-pkg-cache: true
+          skip-build-cache: true
+
+      - name: Check that code is formatted via go fmt tool
+        run: |
+          if [ "$(gofmt -s -l . | grep -v vendor | wc -l)" -gt 0 ]; then
+            exit 1;
+          fi
+
+      - name: Check that go modules are in synced state
+        run: |
+          go mod tidy -v
+          if [ -n "$(git status --porcelain go.mod go.sum)" ]; then
+            echo "Go modules are dirty or not in a good state. Please run go mod tidy"
+            exit 1;
+          fi
+
