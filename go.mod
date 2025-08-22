@@ -1,4 +1,4 @@
-module github.com/xconnio/wash
+module github.com/xconnio/wampshell
 
 go 1.24.6
 

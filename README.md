@@ -1,2 +1,2 @@
-# wash
-WaSH enables P2P and Routed Shell
+# WAMP Shell
+a peer-to-peer and routed shell environment
