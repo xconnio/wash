@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/xconnio/xconn-go"
+	"github.com/xconnio/wampshell/server"
 )
 
 const (
@@ -15,21 +15,24 @@ const (
 )
 
 func main() {
-
-	router := xconn.NewRouter()
-	router.AddRealm(defaultRealm)
-	defer router.Close()
-
-	server := xconn.NewServer(router, nil, nil)
-
 	address := fmt.Sprintf("0.0.0.0:%d", defaultPort)
-	closer, err := server.ListenAndServeRawSocket(xconn.NetworkTCP, address)
-	if err != nil {
-		log.Fatalf("Failed to start server: %v", err)
-	}
-	defer closer.Close()
 
-	log.Printf("wshd running. Realm=%s, Listening on %s", defaultRealm, address)
+	newServer, err := server.NewServer(defaultRealm, address)
+	if err != nil {
+		log.Fatalf("Failed to create Server: %v", err)
+	}
+
+	if err := newServer.Start(); err != nil {
+		log.Fatalf("Failed to start Server: %v", err)
+	}
+	defer func(newServer *server.Server) {
+		err := newServer.Stop()
+		if err != nil {
+			log.Fatalf("Failed to stop Server: %v", err)
+		}
+	}(newServer)
+
+	log.Printf("wshd running. Realm=%s, Listening on %s", newServer.Realm(), newServer.Address())
 
 	closeChan := make(chan os.Signal, 1)
 	signal.Notify(closeChan, os.Interrupt)
