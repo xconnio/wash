@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -10,11 +9,12 @@ import (
 	"github.com/xconnio/xconn-go"
 )
 
+const (
+	defaultRealm = "wampshell"
+	defaultPort  = 8022
+)
+
 func main() {
-	const (
-		defaultRealm = "wampshell"
-		defaultPort  = 8022
-	)
 
 	router := xconn.NewRouter()
 	router.AddRealm(defaultRealm)
@@ -27,12 +27,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
-	defer func(closer io.Closer) {
-		err := closer.Close()
-		if err != nil {
-
-		}
-	}(closer)
+	defer closer.Close()
 
 	log.Printf("wshd running. Realm=%s, Listening on %s", defaultRealm, address)
 
