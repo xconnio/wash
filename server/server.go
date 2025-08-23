@@ -33,7 +33,7 @@ func NewServer(realm, address string) (*Server, error) {
 func (s *Server) Start() error {
 	closer, err := s.server.ListenAndServeRawSocket(xconn.NetworkTCP, s.address)
 	if err != nil {
-		return fmt.Errorf("failed to start server: %v", err)
+		return fmt.Errorf("failed to start server: %w", err)
 	}
 	s.closer = closer
 	log.Printf("WAMP server started on %s", s.address)
