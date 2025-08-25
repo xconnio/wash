@@ -2,7 +2,10 @@ module github.com/xconnio/wampshell
 
 go 1.24.6
 
-require github.com/xconnio/xconn-go v0.0.0-20250822101743-ad29b90b2ee4
+require (
+	github.com/xconnio/berncrypt/go v0.0.0-20250825151556-89c24973ee7a
+	github.com/xconnio/xconn-go v0.0.0-20250825125523-39493809525d
+)
 
 require (
 	capnproto.org/go/capnp/v3 v3.1.0-alpha.1 // indirect
@@ -18,13 +21,13 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	github.com/xconnio/wampproto-go v0.0.0-20250820111356-1ebf798b6d92 // indirect
+	github.com/xconnio/wampproto-go v0.0.0-20250823133449-078b52b652dc // indirect
 	github.com/xconnio/wampproto-protobuf/go v0.0.0-20250731141149-3680ec1f2cd3 // indirect
-	github.com/xconnio/wampproto-serializer-capnproto/go v0.0.0-20250820111704-ec53fb132bce // indirect
-	golang.org/x/crypto v0.40.0 // indirect
+	github.com/xconnio/wampproto-serializer-capnproto/go v0.0.0-20250823081023-3328f7ff47d5 // indirect
+	golang.org/x/crypto v0.41.0 // indirect
 	golang.org/x/exp v0.0.0-20250808145144-a408d31f581a // indirect
 	golang.org/x/sync v0.16.0 // indirect
-	golang.org/x/sys v0.34.0 // indirect
+	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 )
