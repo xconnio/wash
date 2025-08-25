@@ -25,12 +25,11 @@ func main() {
 	if err := newServer.Start(); err != nil {
 		log.Fatalf("Failed to start Server: %v", err)
 	}
-	defer func(newServer *server.Server) {
-		err := newServer.Stop()
-		if err != nil {
+	defer func() {
+		if err := newServer.Stop(); err != nil {
 			log.Fatalf("Failed to stop Server: %v", err)
 		}
-	}(newServer)
+	}()
 
 	log.Printf("wshd running. Realm=%s, Listening on %s", newServer.Realm(), newServer.Address())
 
