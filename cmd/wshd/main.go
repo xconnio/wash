@@ -6,36 +6,43 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/xconnio/wampshell/server"
+	"github.com/xconnio/wampshell"
+	"github.com/xconnio/xconn-go"
 )
 
 const (
 	defaultRealm = "wampshell"
 	defaultPort  = 8022
+	defaultHost  = "0.0.0.0"
 )
 
 func main() {
-	address := fmt.Sprintf("0.0.0.0:%d", defaultPort)
+	address := fmt.Sprintf("%s:%d", defaultHost, defaultPort)
 
-	newServer, err := server.NewServer(defaultRealm, address)
+	router := xconn.NewRouter()
+	if err := router.AddRealm(defaultRealm); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := router.AutoDiscloseCaller(defaultRealm, true); err != nil {
+		log.Fatal(err)
+	}
+
+	encryption := wampshell.NewEncryptionManager(router)
+	if err := encryption.Setup(); err != nil {
+		log.Fatal(err)
+	}
+
+	server := xconn.NewServer(router, nil, nil)
+	closer, err := server.ListenAndServeRawSocket(xconn.NetworkTCP, address)
 	if err != nil {
-		log.Fatalf("Failed to create Server: %v", err)
+		log.Fatalf("failed to start server: %v", err)
 	}
+	defer func() { _ = closer.Close() }()
 
-	if err := newServer.Start(); err != nil {
-		log.Fatalf("Failed to start Server: %v", err)
-	}
-	defer func() {
-		if err := newServer.Stop(); err != nil {
-			log.Fatalf("Failed to stop Server: %v", err)
-		}
-	}()
-
-	log.Printf("wshd running. Realm=%s, Listening on %s", newServer.Realm(), newServer.Address())
+	fmt.Printf("listening on rs://%s\n", address)
 
 	closeChan := make(chan os.Signal, 1)
 	signal.Notify(closeChan, os.Interrupt)
 	<-closeChan
-
-	log.Println("Shutting down wshd...")
 }
