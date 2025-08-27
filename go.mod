@@ -3,7 +3,9 @@ module github.com/xconnio/wampshell
 go 1.24.6
 
 require (
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/xconnio/berncrypt/go v0.0.0-20250825151556-89c24973ee7a
+	github.com/xconnio/wampproto-go v0.0.0-20250823133449-078b52b652dc
 	github.com/xconnio/xconn-go v0.0.0-20250825125523-39493809525d
 )
 
@@ -21,7 +23,6 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	github.com/xconnio/wampproto-go v0.0.0-20250823133449-078b52b652dc // indirect
 	github.com/xconnio/wampproto-protobuf/go v0.0.0-20250731141149-3680ec1f2cd3 // indirect
 	github.com/xconnio/wampproto-serializer-capnproto/go v0.0.0-20250823081023-3328f7ff47d5 // indirect
 	golang.org/x/crypto v0.41.0 // indirect
