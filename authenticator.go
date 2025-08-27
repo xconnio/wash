@@ -25,10 +25,9 @@ func (a *ServerAuthenticator) Authenticate(request auth.Request) (auth.Response,
 	}
 
 	pubKeyHex := cryptosignRequest.PublicKey()
-	for _, pubKey := range a.keyStore.Keys() {
-		if pubKey == pubKeyHex {
-			return auth.NewResponse("", "anonymous", 0)
-		}
+	if a.keyStore.HasKey(pubKeyHex) {
+		return auth.NewResponse("", "anonymous", 0)
 	}
+
 	return nil, fmt.Errorf("public key not authorized")
 }

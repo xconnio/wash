@@ -31,16 +31,16 @@ func main() {
 	authenticator := wampshell.NewAuthenticator(keyStore)
 
 	router := xconn.NewRouter()
-	if err := router.AddRealm(defaultRealm); err != nil {
+	if err = router.AddRealm(defaultRealm); err != nil {
 		log.Fatal(err)
 	}
 
-	if err := router.AutoDiscloseCaller(defaultRealm, true); err != nil {
+	if err = router.AutoDiscloseCaller(defaultRealm, true); err != nil {
 		log.Fatal(err)
 	}
 
 	encryption := wampshell.NewEncryptionManager(router)
-	if err := encryption.Setup(); err != nil {
+	if err = encryption.Setup(); err != nil {
 		log.Fatal(err)
 	}
 

@@ -12,24 +12,33 @@ import (
 )
 
 type KeyStore struct {
-	keys []string
+	keys map[string]struct{}
+
 	sync.RWMutex
 }
 
 func NewKeyStore() *KeyStore {
-	return &KeyStore{}
+	return &KeyStore{
+		keys: make(map[string]struct{}),
+	}
 }
 
-func (k *KeyStore) Keys() []string {
+func (k *KeyStore) HasKey(key string) bool {
 	k.RLock()
 	defer k.RUnlock()
-	return k.keys
+
+	_, ok := k.keys[key]
+	return ok
 }
 
 func (k *KeyStore) Update(keys []string) {
 	k.Lock()
 	defer k.Unlock()
-	k.keys = keys
+
+	k.keys = make(map[string]struct{})
+	for _, key := range keys {
+		k.keys[key] = struct{}{}
+	}
 }
 
 func readKeys(filePath string) ([]string, error) {
