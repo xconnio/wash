@@ -18,6 +18,17 @@ const (
 
 func main() {
 	address := fmt.Sprintf("%s:%d", defaultHost, defaultPort)
+	path := os.ExpandEnv("$HOME/.wampshell/authorized_keys")
+
+	keyStore := wampshell.NewKeyStore()
+
+	keyWatcher, err := keyStore.Watch(path)
+	if err != nil {
+		log.Fatalf("failed to initialize key watcher: %v", err)
+	}
+	defer func() { _ = keyWatcher.Close() }()
+
+	authenticator := wampshell.NewAuthenticator(keyStore)
 
 	router := xconn.NewRouter()
 	if err := router.AddRealm(defaultRealm); err != nil {
@@ -33,7 +44,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	server := xconn.NewServer(router, nil, nil)
+	server := xconn.NewServer(router, authenticator, nil)
+	if server == nil {
+		log.Fatal("failed to create server")
+	}
+
 	closer, err := server.ListenAndServeRawSocket(xconn.NetworkTCP, address)
 	if err != nil {
 		log.Fatalf("failed to start server: %v", err)
