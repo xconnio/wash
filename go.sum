@@ -60,8 +60,8 @@ github.com/xconnio/wampproto-protobuf/go v0.0.0-20250731141149-3680ec1f2cd3 h1:A
 github.com/xconnio/wampproto-protobuf/go v0.0.0-20250731141149-3680ec1f2cd3/go.mod h1:JK4nus2F4v1zFydyuxii7yFlicDXrKhzBFSkk7y9/gQ=
 github.com/xconnio/wampproto-serializer-capnproto/go v0.0.0-20250823081023-3328f7ff47d5 h1:8mjBOa4kUSeUrkzYXheSisx5wDOJzJEi8AMVhiQORw0=
 github.com/xconnio/wampproto-serializer-capnproto/go v0.0.0-20250823081023-3328f7ff47d5/go.mod h1:HorxIFH0Cmxo6qBpohucup8tfvmheKfdnbETmcisvTI=
-github.com/xconnio/xconn-go v0.0.0-20250825125523-39493809525d h1:93KdM/KH21IyZhY1C6W41bbyMKTynGk0JAdkaxVZlKY=
-github.com/xconnio/xconn-go v0.0.0-20250825125523-39493809525d/go.mod h1:LYdWXh608uREaw7RRzWOYiQ6fT2xuV7q6BoLfVI8jTk=
+github.com/xconnio/xconn-go v0.0.0-20250828120935-75e51bc2636c h1:YflFpfBnLPz//+YvjR6TBoSkmr7nlfxjDmitMU7x0sc=
+github.com/xconnio/xconn-go v0.0.0-20250828120935-75e51bc2636c/go.mod h1:LYdWXh608uREaw7RRzWOYiQ6fT2xuV7q6BoLfVI8jTk=
 golang.org/x/crypto v0.41.0 h1:WKYxWedPGCTVVl5+WHSSrOBT0O8lx32+zxmHxijgXp4=
 golang.org/x/crypto v0.41.0/go.mod h1:pO5AFd7FA68rFak7rOAGVuygIISepHftHnr8dr6+sUc=
 golang.org/x/exp v0.0.0-20250808145144-a408d31f581a h1:Y+7uR/b1Mw2iSXZ3G//1haIiSElDQZ8KWh0h+sZPG90=

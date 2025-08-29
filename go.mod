@@ -6,7 +6,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/xconnio/berncrypt/go v0.0.0-20250825151556-89c24973ee7a
 	github.com/xconnio/wampproto-go v0.0.0-20250823133449-078b52b652dc
-	github.com/xconnio/xconn-go v0.0.0-20250825125523-39493809525d
+	github.com/xconnio/xconn-go v0.0.0-20250828120935-75e51bc2636c
 )
 
 require (

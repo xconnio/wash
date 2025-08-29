@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	berncrypt "github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/xconn-go"
@@ -50,8 +53,64 @@ func exchangeKeys(session *xconn.Session) (*keyPair, error) {
 	}, nil
 }
 
+func readPrivateKeyFromFile() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("could not get home directory: %w", err)
+	}
+
+	keyPath := filepath.Join(homeDir, ".wampshell/id_ed25519")
+	keyBytes, err := os.ReadFile(keyPath)
+	if err != nil {
+		return "", fmt.Errorf("could not read private key from %s: %w", keyPath, err)
+	}
+
+	key := strings.TrimSpace(string(keyBytes))
+	return key, nil
+}
+
 func main() {
-	session, err := xconn.ConnectAnonymous(context.Background(), "rs://localhost:8022", "wampshell")
+	if len(os.Args) < 3 {
+		fmt.Printf("Usage: wsh user@host[:port] <command> [args...]\n")
+		os.Exit(1)
+	}
+
+	target := os.Args[1]
+	var host, port string
+
+	if strings.Contains(target, "@") {
+		parts := strings.SplitN(target, "@", 2)
+		_, host = parts[0], parts[1]
+	} else {
+		user := os.Getenv("USER")
+		if user == "" {
+			fmt.Println("Error: user not provided and $USER not set")
+			os.Exit(1)
+		}
+		host = target
+	}
+
+	if strings.Contains(host, ":") {
+		hp := strings.SplitN(host, ":", 2)
+		host, port = hp[0], hp[1]
+	} else {
+		port = "8022"
+	}
+
+	args := os.Args[2:]
+	anyArgs := make([]any, len(args))
+	for i, a := range args {
+		anyArgs[i] = a
+	}
+
+	privateKey, err := readPrivateKeyFromFile()
+	if err != nil {
+		fmt.Printf("Error reading private key: %v\n", err)
+		os.Exit(1)
+	}
+
+	url := fmt.Sprintf("rs://%s:%s", host, port)
+	session, err := xconn.ConnectCryptosign(context.Background(), url, "wampshell", "", privateKey)
 	if err != nil {
 		panic(err)
 	}
@@ -80,10 +139,22 @@ func main() {
 		panic(err)
 	}
 
-	decoded, err := berncrypt.DecryptChaCha20Poly1305(incomingCiphertext[12:], incomingCiphertext[:12], keys.receive)
+	_, err = berncrypt.DecryptChaCha20Poly1305(incomingCiphertext[12:], incomingCiphertext[:12], keys.receive)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Println(string(decoded))
+	cmdResponse := session.Call("wampshell.shell.exec").Args(anyArgs...).Do()
+	if cmdResponse.Err != nil {
+		fmt.Printf("Command execution error: %v\n", cmdResponse.Err)
+		os.Exit(1)
+	}
+
+	output, err := cmdResponse.Args.String(0)
+	if err != nil {
+		fmt.Printf("Output parsing error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Print(output)
 }
