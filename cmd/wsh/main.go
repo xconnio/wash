@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	berncrypt "github.com/xconnio/berncrypt/go"
+	"github.com/xconnio/wampproto-go/auth"
 	"github.com/xconnio/xconn-go"
 )
 
@@ -109,8 +110,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	authenticator, err := auth.NewCryptoSignAuthenticator("", privateKey, nil)
+	if err != nil {
+		fmt.Printf("Error creating crypto sign authenticator: %v\n", err)
+		os.Exit(1)
+	}
+
+	client := xconn.Client{
+		SerializerSpec: xconn.CapnprotoSplitSerializerSpec,
+		Authenticator:  authenticator,
+	}
+
 	url := fmt.Sprintf("rs://%s:%s", host, port)
-	session, err := xconn.ConnectCryptosign(context.Background(), url, "wampshell", "", privateKey)
+	session, err := client.Connect(context.Background(), url, "wampshell")
 	if err != nil {
 		panic(err)
 	}
