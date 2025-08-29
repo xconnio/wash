@@ -98,6 +98,10 @@ func main() {
 	}
 
 	args := os.Args[2:]
+	anyArgs := make([]any, len(args))
+	for i, a := range args {
+		anyArgs[i] = a
+	}
 
 	privateKey, err := readPrivateKeyFromFile()
 	if err != nil {
@@ -140,11 +144,7 @@ func main() {
 		panic(err)
 	}
 
-	cmd := session.Call("wampshell.shell.exec").Arg(args[0])
-	for _, arg := range args[1:] {
-		cmd = cmd.Arg(arg)
-	}
-	cmdResponse := cmd.Do()
+	cmdResponse := session.Call("wampshell.shell.exec").Args(anyArgs...).Do()
 	if cmdResponse.Err != nil {
 		fmt.Printf("Command execution error: %v\n", cmdResponse.Err)
 		os.Exit(1)
