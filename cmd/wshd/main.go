@@ -48,6 +48,7 @@ func handleRunCommand(_ context.Context, inv *xconn.Invocation) *xconn.Invocatio
 		}
 		args = append(args, str)
 	}
+
 	output, err := runCommand(cmd, args...)
 	if err != nil {
 		return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
