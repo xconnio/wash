@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	berncrypt "github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wampproto-go/auth"
+	"github.com/xconnio/wampshell"
 	"github.com/xconnio/xconn-go"
 )
 
@@ -54,22 +54,6 @@ func exchangeKeys(session *xconn.Session) (*keyPair, error) {
 	}, nil
 }
 
-func readPrivateKeyFromFile() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("could not get home directory: %w", err)
-	}
-
-	keyPath := filepath.Join(homeDir, ".wampshell/id_ed25519")
-	keyBytes, err := os.ReadFile(keyPath)
-	if err != nil {
-		return "", fmt.Errorf("could not read private key from %s: %w", keyPath, err)
-	}
-
-	key := strings.TrimSpace(string(keyBytes))
-	return key, nil
-}
-
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Printf("Usage: wsh user@host[:port] <command> [args...]\n")
@@ -104,7 +88,7 @@ func main() {
 		anyArgs[i] = a
 	}
 
-	privateKey, err := readPrivateKeyFromFile()
+	privateKey, err := wampshell.ReadPrivateKeyFromFile()
 	if err != nil {
 		fmt.Printf("Error reading private key: %v\n", err)
 		os.Exit(1)

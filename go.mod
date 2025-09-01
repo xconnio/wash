@@ -5,8 +5,8 @@ go 1.24.6
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/xconnio/berncrypt/go v0.0.0-20250825151556-89c24973ee7a
-	github.com/xconnio/wampproto-go v0.0.0-20250823133449-078b52b652dc
-	github.com/xconnio/xconn-go v0.0.0-20250828120935-75e51bc2636c
+	github.com/xconnio/wampproto-go v0.0.0-20250828114121-f059fafc25b7
+	github.com/xconnio/xconn-go v0.0.0-20250829091103-0f7ccc5864a2
 )
 
 require (
@@ -18,17 +18,17 @@ require (
 	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
-	github.com/projectdiscovery/ratelimit v0.0.81 // indirect
-	github.com/projectdiscovery/utils v0.4.22 // indirect
+	github.com/projectdiscovery/ratelimit v0.0.82 // indirect
+	github.com/projectdiscovery/utils v0.5.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	github.com/xconnio/wampproto-protobuf/go v0.0.0-20250731141149-3680ec1f2cd3 // indirect
-	github.com/xconnio/wampproto-serializer-capnproto/go v0.0.0-20250823081023-3328f7ff47d5 // indirect
+	github.com/xconnio/wampproto-protobuf/go v0.0.0-20250826150715-1848ae78df0f // indirect
+	github.com/xconnio/wampproto-serializer-capnproto/go v0.0.0-20250828101100-8acce19228df // indirect
 	golang.org/x/crypto v0.41.0 // indirect
-	golang.org/x/exp v0.0.0-20250808145144-a408d31f581a // indirect
+	golang.org/x/exp v0.0.0-20250819193227-8b4c13bb791b // indirect
 	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
-	google.golang.org/protobuf v1.36.6 // indirect
+	google.golang.org/protobuf v1.36.8 // indirect
 )
