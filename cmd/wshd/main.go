@@ -8,16 +8,18 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 
 	"github.com/xconnio/wampshell"
 	"github.com/xconnio/xconn-go"
 )
 
 const (
-	defaultRealm  = "wampshell"
-	defaultPort   = 8022
-	defaultHost   = "0.0.0.0"
-	procedureExec = "wampshell.shell.exec"
+	defaultRealm        = "wampshell"
+	defaultPort         = 8022
+	defaultHost         = "0.0.0.0"
+	procedureExec       = "wampshell.shell.exec"
+	procedureFileUpload = "wampshell.shell.upload"
 )
 
 func runCommand(cmd string, args ...string) (string, error) {
@@ -57,12 +59,63 @@ func handleRunCommand(_ context.Context, inv *xconn.Invocation) *xconn.Invocatio
 	return xconn.NewInvocationResult(output)
 }
 
+func fileUpload(filename string, data []byte) (string, error) {
+	cleanPath := filepath.Clean(filename)
+
+	if err := os.WriteFile(cleanPath, data, 0600); err != nil {
+		return "", fmt.Errorf("failed to write file: %w", err)
+	}
+	return fmt.Sprintf("file uploaded: %s (%d bytes)", cleanPath, len(data)), nil
+}
+
+func handleFileUpload(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
+	if len(inv.Args()) < 2 {
+		return xconn.NewInvocationError("wamp.error.invalid_argument", "expected file")
+	}
+
+	filename, err := inv.ArgString(0)
+	if err != nil {
+		return xconn.NewInvocationError("wamp.error.invalid_argument", err.Error())
+	}
+
+	data, err := inv.ArgBytes(1)
+	if err != nil {
+		return xconn.NewInvocationError("wamp.error.invalid_argument",
+			fmt.Sprintf("file content must be []byte, got %s", err.Error()))
+	}
+
+	output, err := fileUpload(filename, data)
+	if err != nil {
+		log.Printf("File upload error: %v", err)
+		return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
+	}
+
+	log.Printf("Saved file: %s", filename)
+	return xconn.NewInvocationResult(output)
+}
+
+func registerProcedure(session *xconn.Session, procedure string, handler xconn.InvocationHandler) error {
+	response := session.Register(procedure, handler).Do()
+	if response.Err != nil {
+		return fmt.Errorf("failed to register procedure %q: %w", procedure, response.Err)
+	}
+	log.Printf("Procedure registered: %s", procedure)
+	return nil
+}
+
 func main() {
 	address := fmt.Sprintf("%s:%d", defaultHost, defaultPort)
 	path := os.ExpandEnv("$HOME/.wampshell/authorized_keys")
 
-	keyStore := wampshell.NewKeyStore()
+	procedures := []struct {
+		name    string
+		handler xconn.InvocationHandler
+	}{
+		{procedureExec, handleRunCommand},
+		{procedureFileUpload, handleFileUpload},
+	}
 
+	keyStore := wampshell.NewKeyStore()
 	keyWatcher, err := keyStore.Watch(path)
 	if err != nil {
 		log.Fatalf("failed to initialize key watcher: %v", err)
@@ -75,7 +128,6 @@ func main() {
 	if err = router.AddRealm(defaultRealm); err != nil {
 		log.Fatal(err)
 	}
-
 	if err = router.AutoDiscloseCaller(defaultRealm, true); err != nil {
 		log.Fatal(err)
 	}
@@ -96,19 +148,18 @@ func main() {
 	}
 	defer func() { _ = closer.Close() }()
 
-	log.Printf("listening on rs://%s", address)
-
 	session, err := xconn.ConnectInMemory(router, defaultRealm)
 	if err != nil {
 		log.Fatalf("failed to connect to server: %v", err)
 	}
 
-	registerResponse := session.Register(procedureExec, handleRunCommand).Do()
-	if registerResponse.Err != nil {
-		log.Fatalf("failed to register procedure %q: %v", procedureExec, registerResponse.Err)
+	for _, proc := range procedures {
+		if err := registerProcedure(session, proc.name, proc.handler); err != nil {
+			log.Fatal(err)
+		}
 	}
 
-	log.Printf("Procedure registered: %s", procedureExec)
+	log.Printf("listening on rs://%s", address)
 
 	closeChan := make(chan os.Signal, 1)
 	signal.Notify(closeChan, os.Interrupt)
