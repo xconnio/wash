@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	berncrypt "github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wampproto-go/auth"
 	"github.com/xconnio/wampshell"
 	"github.com/xconnio/xconn-go"
@@ -15,6 +16,48 @@ import (
 const (
 	maxSize = 1024 * 1024 * 15
 )
+
+type keyPair struct {
+	send    []byte
+	receive []byte
+}
+
+func exchangeKeys(session *xconn.Session) (*keyPair, error) {
+	publicKey, privateKey, err := berncrypt.CreateX25519KeyPair()
+	if err != nil {
+		return nil, err
+	}
+
+	response := session.Call("wampshell.key.exchange").Arg(publicKey).Do()
+	if response.Err != nil {
+		return nil, response.Err
+	}
+
+	publicKeyPeer, err := response.Args.Bytes(0)
+	if err != nil {
+		return nil, err
+	}
+
+	sharedSecret, err := berncrypt.PerformKeyExchange(privateKey, publicKeyPeer)
+	if err != nil {
+		return nil, err
+	}
+
+	receiveKey, err := berncrypt.DeriveKeyHKDF(sharedSecret, []byte("backendToFrontend"))
+	if err != nil {
+		return nil, err
+	}
+
+	sendKey, err := berncrypt.DeriveKeyHKDF(sharedSecret, []byte("frontendToBackend"))
+	if err != nil {
+		return nil, err
+	}
+
+	return &keyPair{
+		send:    sendKey,
+		receive: receiveKey,
+	}, nil
+}
 
 func main() {
 	if len(os.Args) < 3 {
@@ -91,17 +134,35 @@ func main() {
 		panic(err)
 	}
 
-	cmdResponse := session.Call("wampshell.shell.upload").Args(remoteFile, data).Do()
+	keys, err := exchangeKeys(session)
+	if err != nil {
+		panic(err)
+	}
+
+	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(data, keys.send)
+	if err != nil {
+		panic(err)
+	}
+	encryptedPayload := make([]byte, len(nonce)+len(ciphertext))
+	copy(encryptedPayload, nonce)
+	copy(encryptedPayload[len(nonce):], ciphertext)
+
+	cmdResponse := session.Call("wampshell.shell.upload").Args(remoteFile, encryptedPayload).Do()
 	if cmdResponse.Err != nil {
 		fmt.Printf("File upload error: %v\n", cmdResponse.Err)
 		os.Exit(1)
 	}
 
-	output, err := cmdResponse.Args.String(0)
+	encResp, err := cmdResponse.Args.Bytes(0)
 	if err != nil {
 		fmt.Printf("Output parsing error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Server response: %s\n", output)
+	resp, err := berncrypt.DecryptChaCha20Poly1305(encResp[12:], encResp[:12], keys.receive)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("Server response: %s\n", string(resp))
 }
