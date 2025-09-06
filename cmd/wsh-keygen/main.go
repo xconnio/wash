@@ -8,16 +8,17 @@ import (
 	"strings"
 
 	"github.com/xconnio/wampproto-go/auth"
+	"github.com/xconnio/wampshell"
 )
 
 func main() {
-	home, err := os.UserHomeDir()
+	home, err := wampshell.RealHome()
 	if err != nil {
-		log.Fatalf("failed to get home dir: %v", err)
+		log.Fatal(err)
 	}
 
 	dir := filepath.Join(home, ".wampshell")
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err = os.MkdirAll(dir, 0700); err != nil {
 		log.Fatalf("failed to create dir: %v", err)
 	}
 
