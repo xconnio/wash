@@ -12,16 +12,21 @@ import (
 	"strings"
 
 	berncrypt "github.com/xconnio/berncrypt/go"
+	"github.com/xconnio/wamp-webrtc-go"
+	"github.com/xconnio/wampproto-go/serializers"
 	"github.com/xconnio/wampshell"
 	"github.com/xconnio/xconn-go"
 )
 
 const (
-	defaultRealm        = "wampshell"
-	defaultPort         = 8022
-	defaultHost         = "0.0.0.0"
-	procedureExec       = "wampshell.shell.exec"
-	procedureFileUpload = "wampshell.shell.upload"
+	defaultRealm             = "wampshell"
+	defaultPort              = 8022
+	defaultHost              = "0.0.0.0"
+	procedureExec            = "wampshell.shell.exec"
+	procedureFileUpload      = "wampshell.shell.upload"
+	procedureWebRTCOffer     = "wampshell.webrtc.offer"
+	topicOffererOnCandidate  = "wampshell.webrtc.offerer.on_candidate"
+	topicAnswererOnCandidate = "wampshell.webrtc.answerer.on_candidate"
 )
 
 func runCommand(cmd string, args ...string) ([]byte, error) {
@@ -40,7 +45,6 @@ func handleRunCommand(e *wampshell.EncryptionManager) func(_ context.Context,
 	inv *xconn.Invocation) *xconn.InvocationResult {
 	return func(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
 
-		fmt.Println(inv.Args()[0])
 		payload, err := inv.ArgBytes(0)
 		if err != nil {
 			return xconn.NewInvocationError("wamp.error.invalid_argument", err.Error())
@@ -58,7 +62,6 @@ func handleRunCommand(e *wampshell.EncryptionManager) func(_ context.Context,
 		if err != nil {
 			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
 		}
-		log.Printf("Received invocation: args=%v, kwargs=%v", inv.Args(), inv.Kwargs())
 
 		s := string(decryptedPayload)
 		newStrs := strings.Split(s, " ")
@@ -201,6 +204,21 @@ func main() {
 	session, err := xconn.ConnectInMemory(router, defaultRealm)
 	if err != nil {
 		log.Fatalf("failed to connect to server: %v", err)
+	}
+
+	webRtcManager := wamp_webrtc_go.NewWebRTCHandler()
+	cfg := &wamp_webrtc_go.ProviderConfig{
+		Session:                     session,
+		ProcedureHandleOffer:        procedureWebRTCOffer,
+		TopicHandleRemoteCandidates: topicAnswererOnCandidate,
+		TopicPublishLocalCandidate:  topicOffererOnCandidate,
+		Serializer:                  &serializers.CBORSerializer{},
+		Authenticator:               authenticator,
+		Router:                      router,
+	}
+	err = webRtcManager.Setup(cfg)
+	if err != nil {
+		return
 	}
 
 	for _, proc := range procedures {
