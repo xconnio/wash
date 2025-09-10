@@ -9,54 +9,83 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 
+	berncrypt "github.com/xconnio/berncrypt/go"
+	"github.com/xconnio/wamp-webrtc-go"
+	"github.com/xconnio/wampproto-go/serializers"
 	"github.com/xconnio/wampshell"
 	"github.com/xconnio/xconn-go"
 )
 
 const (
-	defaultRealm        = "wampshell"
-	defaultPort         = 8022
-	defaultHost         = "0.0.0.0"
-	procedureExec       = "wampshell.shell.exec"
-	procedureFileUpload = "wampshell.shell.upload"
+	defaultRealm             = "wampshell"
+	defaultPort              = 8022
+	defaultHost              = "0.0.0.0"
+	procedureExec            = "wampshell.shell.exec"
+	procedureFileUpload      = "wampshell.shell.upload"
+	procedureWebRTCOffer     = "wampshell.webrtc.offer"
+	topicOffererOnCandidate  = "wampshell.webrtc.offerer.on_candidate"
+	topicAnswererOnCandidate = "wampshell.webrtc.answerer.on_candidate"
 )
 
-func runCommand(cmd string, args ...string) (string, error) {
+func runCommand(cmd string, args ...string) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
 	command := exec.Command(cmd, args...)
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	err := command.Run()
 	if err != nil {
-		return stderr.String(), err
+		return stderr.Bytes(), err
 	}
-	return stdout.String(), nil
+	return stdout.Bytes(), nil
 }
 
-func handleRunCommand(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
-	log.Printf("Received invocation: args=%v, kwargs=%v", inv.Args(), inv.Kwargs())
+func handleRunCommand(e *wampshell.EncryptionManager) func(_ context.Context,
+	inv *xconn.Invocation) *xconn.InvocationResult {
+	return func(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
 
-	cmd, err := inv.ArgString(0)
-	if err != nil {
-		return xconn.NewInvocationError("wamp.error.invalid_argument", err.Error())
-	}
-	rawArgs := inv.Args()[1:]
-	args := make([]string, 0, len(rawArgs))
-	for idx := range rawArgs {
-		str, err := inv.ArgString(idx + 1)
+		payload, err := inv.ArgBytes(0)
 		if err != nil {
 			return xconn.NewInvocationError("wamp.error.invalid_argument", err.Error())
 		}
-		args = append(args, str)
-	}
 
-	output, err := runCommand(cmd, args...)
-	if err != nil {
-		return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
-	}
+		e.Lock()
+		key, ok := e.Keys()[inv.Caller()]
+		e.Unlock()
 
-	return xconn.NewInvocationResult(output)
+		if !ok {
+			return xconn.NewInvocationError("wamp.error.unavailable", "unavailable")
+		}
+
+		decryptedPayload, err := berncrypt.DecryptChaCha20Poly1305(payload[12:], payload[:12], key.Receive)
+		if err != nil {
+			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
+		}
+
+		s := string(decryptedPayload)
+		newStrs := strings.Split(s, " ")
+
+		cmd := newStrs[0]
+
+		rawArgs := newStrs[1:]
+
+		output, err := runCommand(cmd, rawArgs...)
+		if err != nil {
+			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
+		}
+
+		ciphertext1, nonce1, err1 := berncrypt.EncryptChaCha20Poly1305(output, key.Send)
+		if err1 != nil {
+			panic(err)
+		}
+
+		payload1 := make([]byte, len(nonce1)+len(ciphertext1))
+		copy(payload1, nonce1)
+		copy(payload1[len(nonce1):], ciphertext1)
+
+		return xconn.NewInvocationResult(payload1)
+	}
 }
 
 func fileUpload(filename string, data []byte) (string, error) {
@@ -68,30 +97,54 @@ func fileUpload(filename string, data []byte) (string, error) {
 	return fmt.Sprintf("file uploaded: %s (%d bytes)", cleanPath, len(data)), nil
 }
 
-func handleFileUpload(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
-	if len(inv.Args()) < 2 {
-		return xconn.NewInvocationError("wamp.error.invalid_argument", "expected file")
-	}
+func handleFileUpload(e *wampshell.EncryptionManager) func(_ context.Context,
+	inv *xconn.Invocation) *xconn.InvocationResult {
+	return func(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
+		if len(inv.Args()) < 2 {
+			return xconn.NewInvocationError("wamp.error.invalid_argument", "expected filename + encrypted data")
+		}
 
-	filename, err := inv.ArgString(0)
-	if err != nil {
-		return xconn.NewInvocationError("wamp.error.invalid_argument", err.Error())
-	}
+		filename, err := inv.ArgString(0)
+		if err != nil {
+			return xconn.NewInvocationError("wamp.error.invalid_argument", err.Error())
+		}
 
-	data, err := inv.ArgBytes(1)
-	if err != nil {
-		return xconn.NewInvocationError("wamp.error.invalid_argument",
-			fmt.Sprintf("file content must be []byte, got %s", err.Error()))
-	}
+		payload, err := inv.ArgBytes(1)
+		if err != nil {
+			return xconn.NewInvocationError("wamp.error.invalid_argument",
+				fmt.Sprintf("file content must be []byte, got %s", err.Error()))
+		}
 
-	output, err := fileUpload(filename, data)
-	if err != nil {
-		log.Printf("File upload error: %v", err)
-		return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
-	}
+		e.Lock()
+		key, ok := e.Keys()[inv.Caller()]
+		e.Unlock()
+		if !ok {
+			return xconn.NewInvocationError("wamp.error.unavailable", "no encryption key for caller")
+		}
 
-	log.Printf("Saved file: %s", filename)
-	return xconn.NewInvocationResult(output)
+		decryptedData, err := berncrypt.DecryptChaCha20Poly1305(payload[12:], payload[:12], key.Receive)
+		if err != nil {
+			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
+		}
+
+		output, err := fileUpload(filename, decryptedData)
+		if err != nil {
+			log.Printf("File upload error: %v", err)
+			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
+		}
+		log.Printf("Saved file: %s", filename)
+
+		ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305([]byte(output), key.Send)
+		if err != nil {
+			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
+		}
+
+		responsePayload := make([]byte, len(nonce)+len(ciphertext))
+		copy(responsePayload, nonce)
+		copy(responsePayload[len(nonce):], ciphertext)
+
+		return xconn.NewInvocationResult(responsePayload)
+	}
 }
 
 func registerProcedure(session *xconn.Session, procedure string, handler xconn.InvocationHandler) error {
@@ -106,14 +159,6 @@ func registerProcedure(session *xconn.Session, procedure string, handler xconn.I
 func main() {
 	address := fmt.Sprintf("%s:%d", defaultHost, defaultPort)
 	path := os.ExpandEnv("$HOME/.wampshell/authorized_keys")
-
-	procedures := []struct {
-		name    string
-		handler xconn.InvocationHandler
-	}{
-		{procedureExec, handleRunCommand},
-		{procedureFileUpload, handleFileUpload},
-	}
 
 	keyStore := wampshell.NewKeyStore()
 	keyWatcher, err := keyStore.Watch(path)
@@ -137,6 +182,14 @@ func main() {
 		log.Fatal(err)
 	}
 
+	procedures := []struct {
+		name    string
+		handler xconn.InvocationHandler
+	}{
+		{procedureExec, handleRunCommand(encryption)},
+		{procedureFileUpload, handleFileUpload(encryption)},
+	}
+
 	server := xconn.NewServer(router, authenticator, nil)
 	if server == nil {
 		log.Fatal("failed to create server")
@@ -151,6 +204,21 @@ func main() {
 	session, err := xconn.ConnectInMemory(router, defaultRealm)
 	if err != nil {
 		log.Fatalf("failed to connect to server: %v", err)
+	}
+
+	webRtcManager := wamp_webrtc_go.NewWebRTCHandler()
+	cfg := &wamp_webrtc_go.ProviderConfig{
+		Session:                     session,
+		ProcedureHandleOffer:        procedureWebRTCOffer,
+		TopicHandleRemoteCandidates: topicAnswererOnCandidate,
+		TopicPublishLocalCandidate:  topicOffererOnCandidate,
+		Serializer:                  &serializers.CBORSerializer{},
+		Authenticator:               authenticator,
+		Router:                      router,
+	}
+	err = webRtcManager.Setup(cfg)
+	if err != nil {
+		return
 	}
 
 	for _, proc := range procedures {

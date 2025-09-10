@@ -5,8 +5,9 @@ go 1.24.6
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/xconnio/berncrypt/go v0.0.0-20250825151556-89c24973ee7a
-	github.com/xconnio/wampproto-go v0.0.0-20250828114121-f059fafc25b7
-	github.com/xconnio/xconn-go v0.0.0-20250829091103-0f7ccc5864a2
+	github.com/xconnio/wamp-webrtc-go v0.0.0-20250910131056-bdb44b68e993
+	github.com/xconnio/wampproto-go v0.0.0-20250904095518-e79af763bcae
+	github.com/xconnio/xconn-go v0.0.0-20250904111951-c9af0abb2ffc
 )
 
 require (

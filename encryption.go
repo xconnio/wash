@@ -9,8 +9,8 @@ import (
 )
 
 type keyPair struct {
-	send    []byte
-	receive []byte
+	Send    []byte
+	Receive []byte
 }
 
 type EncryptionManager struct {
@@ -76,7 +76,7 @@ func (e *EncryptionManager) HandleKeyExchange(_ context.Context, invocation *xco
 	sessionID := invocation.Caller()
 
 	e.Lock()
-	e.keys[sessionID] = &keyPair{send: sendKey, receive: receiveKey}
+	e.keys[sessionID] = &keyPair{Send: sendKey, Receive: receiveKey}
 	e.Unlock()
 
 	return xconn.NewInvocationResult(publicKey)
@@ -96,12 +96,12 @@ func (e *EncryptionManager) TestEcho(_ context.Context, invocation *xconn.Invoca
 		return xconn.NewInvocationError("wamp.error.unavailable", "unavailable")
 	}
 
-	decryptedPayload, err := berncrypt.DecryptChaCha20Poly1305(payload[12:], payload[:12], key.receive)
+	decryptedPayload, err := berncrypt.DecryptChaCha20Poly1305(payload[12:], payload[:12], key.Receive)
 	if err != nil {
 		return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
 	}
 
-	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(decryptedPayload, key.send)
+	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(decryptedPayload, key.Send)
 	if err != nil {
 		return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
 	}
@@ -110,4 +110,8 @@ func (e *EncryptionManager) TestEcho(_ context.Context, invocation *xconn.Invoca
 	copy(response, nonce)
 	copy(response[len(nonce):], ciphertext)
 	return xconn.NewInvocationResult(response)
+}
+
+func (e *EncryptionManager) Keys() map[uint64]*keyPair {
+	return e.keys
 }

@@ -2,14 +2,24 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 
 	berncrypt "github.com/xconnio/berncrypt/go"
+	"github.com/xconnio/wamp-webrtc-go"
 	"github.com/xconnio/wampproto-go/auth"
 	"github.com/xconnio/wampshell"
 	"github.com/xconnio/xconn-go"
+)
+
+const (
+	defaultRealm             = "wampshell"
+	procedureWebRTCOffer     = "wampshell.webrtc.offer"
+	topicOffererOnCandidate  = "wampshell.webrtc.offerer.on_candidate"
+	topicAnswererOnCandidate = "wampshell.webrtc.answerer.on_candidate"
 )
 
 type keyPair struct {
@@ -55,14 +65,33 @@ func exchangeKeys(session *xconn.Session) (*keyPair, error) {
 }
 
 func main() {
-	if len(os.Args) < 3 {
-		fmt.Printf("Usage: wsh user@host[:port] <command> [args...]\n")
+	ordered := []string{os.Args[0]}
+	var flags, nonFlags []string
+
+	for _, a := range os.Args[1:] {
+		if a == "-p2p" {
+			flags = append(flags, a)
+		} else {
+			nonFlags = append(nonFlags, a)
+		}
+	}
+
+	ordered = append(ordered, flags...)
+	ordered = append(ordered, nonFlags...)
+	os.Args = ordered
+
+	peerToPeer := flag.Bool("p2p", false, "Use WebRTC for peer-to-peer connection")
+	flag.Parse()
+
+	if len(flag.Args()) < 2 {
+		fmt.Printf("Usage: wsh [-p2p] user@host[:port] <command> [args...]\n")
 		os.Exit(1)
 	}
 
-	target := os.Args[1]
-	var host, port string
+	target := flag.Args()[0]
+	args := flag.Args()[1:]
 
+	var host, port string
 	if strings.Contains(target, "@") {
 		parts := strings.SplitN(target, "@", 2)
 		_, host = parts[0], parts[1]
@@ -82,7 +111,6 @@ func main() {
 		port = "8022"
 	}
 
-	args := os.Args[2:]
 	anyArgs := make([]any, len(args))
 	for i, a := range args {
 		anyArgs[i] = a
@@ -106,9 +134,24 @@ func main() {
 	}
 
 	url := fmt.Sprintf("rs://%s:%s", host, port)
-	session, err := client.Connect(context.Background(), url, "wampshell")
-	if err != nil {
-		panic(err)
+
+	session, err := client.Connect(context.Background(), url, defaultRealm)
+
+	if *peerToPeer {
+		config := &wamp_webrtc_go.ClientConfig{
+			Realm:                    defaultRealm,
+			ProcedureWebRTCOffer:     procedureWebRTCOffer,
+			TopicAnswererOnCandidate: topicAnswererOnCandidate,
+			TopicOffererOnCandidate:  topicOffererOnCandidate,
+			Serializer:               xconn.CBORSerializerSpec,
+			Authenticator:            authenticator,
+			Session:                  session,
+		}
+
+		session, err = wamp_webrtc_go.ConnectWAMP(config)
+		if err != nil {
+			log.Fatalf("Failed to connect via WebRTC: %v", err)
+		}
 	}
 
 	keys, err := exchangeKeys(session)
@@ -116,7 +159,9 @@ func main() {
 		panic(err)
 	}
 
-	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305([]byte("send"), keys.send)
+	b := []byte(strings.Join(args, " "))
+
+	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(b, keys.send)
 	if err != nil {
 		panic(err)
 	}
@@ -125,32 +170,22 @@ func main() {
 	copy(payload, nonce)
 	copy(payload[len(nonce):], ciphertext)
 
-	response := session.Call("wampshell.payload.echo").Arg(payload).Do()
-	if response.Err != nil {
-		panic(response.Err)
-	}
-
-	incomingCiphertext, err := response.Args.Bytes(0)
-	if err != nil {
-		panic(err)
-	}
-
-	_, err = berncrypt.DecryptChaCha20Poly1305(incomingCiphertext[12:], incomingCiphertext[:12], keys.receive)
-	if err != nil {
-		panic(err)
-	}
-
-	cmdResponse := session.Call("wampshell.shell.exec").Args(anyArgs...).Do()
+	cmdResponse := session.Call("wampshell.shell.exec").Args(payload).Do()
 	if cmdResponse.Err != nil {
 		fmt.Printf("Command execution error: %v\n", cmdResponse.Err)
 		os.Exit(1)
 	}
 
-	output, err := cmdResponse.Args.String(0)
+	output, err := cmdResponse.Args.Bytes(0)
 	if err != nil {
 		fmt.Printf("Output parsing error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Print(output)
+	a, err := berncrypt.DecryptChaCha20Poly1305(output[12:], output[:12], keys.receive)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Print(string(a))
+
 }
