@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"os"
 	"strings"
+
+	"github.com/jessevdk/go-flags"
 
 	berncrypt "github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wamp-webrtc-go"
@@ -64,32 +65,25 @@ func exchangeKeys(session *xconn.Session) (*keyPair, error) {
 	}, nil
 }
 
+type Options struct {
+	PeerToPeer bool `long:"p2p" description:"Use WebRTC for peer-to-peer connection"`
+	Args       struct {
+		Target string   `positional-arg-name:"host" required:"true"`
+		Cmd    []string `positional-arg-name:"command" required:"true"`
+	} `positional-args:"yes"`
+}
+
 func main() {
-	ordered := []string{os.Args[0]}
-	var flags, nonFlags []string
+	var opts Options
+	parser := flags.NewParser(&opts, flags.Default)
 
-	for _, a := range os.Args[1:] {
-		if a == "-p2p" {
-			flags = append(flags, a)
-		} else {
-			nonFlags = append(nonFlags, a)
-		}
-	}
-
-	ordered = append(ordered, flags...)
-	ordered = append(ordered, nonFlags...)
-	os.Args = ordered
-
-	peerToPeer := flag.Bool("p2p", false, "Use WebRTC for peer-to-peer connection")
-	flag.Parse()
-
-	if len(flag.Args()) < 2 {
-		fmt.Printf("Usage: wsh [-p2p] user@host[:port] <command> [args...]\n")
+	_, err := parser.Parse()
+	if err != nil {
 		os.Exit(1)
 	}
 
-	target := flag.Args()[0]
-	args := flag.Args()[1:]
+	target := opts.Args.Target
+	args := opts.Args.Cmd
 
 	var host, port string
 	if strings.Contains(target, "@") {
@@ -140,7 +134,7 @@ func main() {
 		log.Fatalf("Failed to connect via TCP: %v", err)
 	}
 
-	if *peerToPeer {
+	if opts.PeerToPeer {
 		config := &wamp_webrtc_go.ClientConfig{
 			Realm:                    defaultRealm,
 			ProcedureWebRTCOffer:     procedureWebRTCOffer,
