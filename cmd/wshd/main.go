@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jessevdk/go-flags"
+
 	berncrypt "github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wamp-webrtc-go"
 	"github.com/xconnio/wampproto-go/serializers"
@@ -172,7 +174,19 @@ func registerProcedure(session *xconn.Session, procedure string, handler xconn.I
 	return nil
 }
 
+type Options struct {
+	Start struct{} `command:"start" description:"Start wshd server"`
+}
+
 func main() {
+	var opts Options
+	parser := flags.NewParser(&opts, flags.Default)
+
+	_, err := parser.Parse()
+	if err != nil {
+		os.Exit(1)
+	}
+
 	address := fmt.Sprintf("%s:%d", defaultHost, defaultPort)
 	path := os.ExpandEnv("$HOME/.wampshell/authorized_keys")
 
