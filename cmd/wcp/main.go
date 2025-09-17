@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jessevdk/go-flags"
+
 	berncrypt "github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wampproto-go/auth"
 	"github.com/xconnio/wampshell"
@@ -131,18 +133,28 @@ func splitRemote(s string) (user, host, port, path string, err error) {
 
 	if user == "" {
 		user = os.Getenv("USER")
-		fmt.Println(user)
 	}
 	return
 }
 
+type Options struct {
+	Args struct {
+		Source string `positional-arg-name:"source" required:"true"`
+		Target string `positional-arg-name:"target" required:"true"`
+	} `positional-args:"yes"`
+}
+
 func main() {
-	if len(os.Args) != 3 {
-		fmt.Printf("Usage: wcp <source> <target>\n")
+	var opts Options
+	parser := flags.NewParser(&opts, flags.Default)
+
+	_, err := parser.Parse()
+	if err != nil {
 		os.Exit(1)
 	}
-	src := os.Args[1]
-	dst := os.Args[2]
+
+	src := opts.Args.Source
+	dst := opts.Args.Target
 
 	var mode string
 	var localFile, remoteFile string

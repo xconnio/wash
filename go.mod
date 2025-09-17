@@ -4,6 +4,7 @@ go 1.24.6
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/jessevdk/go-flags v1.6.1
 	github.com/xconnio/berncrypt/go v0.0.0-20250825151556-89c24973ee7a
 	github.com/xconnio/wamp-webrtc-go v0.0.0-20250915090510-b6fed9369c97
 	github.com/xconnio/wampproto-go v0.0.0-20250904095518-e79af763bcae
