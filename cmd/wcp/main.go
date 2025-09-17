@@ -52,62 +52,112 @@ func exchangeKeys(session *xconn.Session) (*keyPair, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return &keyPair{
 		send:    sendKey,
 		receive: receiveKey,
 	}, nil
 }
 
-func main() {
-	if len(os.Args) < 3 {
-		fmt.Printf("Usage: wcp user@host[:port] <localfile> [remotefile]\n")
-		os.Exit(1)
-	}
-
-	target := os.Args[1]
-	var host, port string
-
-	if strings.Contains(target, "@") {
-		parts := strings.SplitN(target, "@", 2)
-		_, host = parts[0], parts[1]
-	} else {
-		user := os.Getenv("USER")
-		if user == "" {
-			fmt.Println("Error: user not provided and $USER not set")
-			os.Exit(1)
-		}
-		host = target
-	}
-
-	if strings.Contains(host, ":") {
-		hp := strings.SplitN(host, ":", 2)
-		host, port = hp[0], hp[1]
-	} else {
-		port = "8022"
-	}
-
-	localFile := os.Args[2]
-	var remoteFile string
-	if len(os.Args) >= 4 {
-		remoteFile = os.Args[3]
-	} else {
-		remoteFile = filepath.Base(localFile)
-	}
-
-	fileInfo, err := os.Stat(localFile)
+func uploadFile(session *xconn.Session, keys *keyPair, localFile, remoteFile string) error {
+	file, err := os.Stat(localFile)
 	if err != nil {
-		fmt.Printf("Failed to stat local file: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to stat local file: %w", err)
 	}
-	if fileInfo.Size() > maxSize {
-		fmt.Printf("File too large: %d bytes (max %d bytes)\n", fileInfo.Size(), maxSize)
-		os.Exit(1)
+	if file.Size() > maxSize {
+		return fmt.Errorf("file too large: %d bytes (max %d bytes)", file.Size(), maxSize)
 	}
-
 	data, err := os.ReadFile(localFile)
 	if err != nil {
-		fmt.Printf("Failed to read local file: %v\n", err)
+		return fmt.Errorf("failed to read local file: %w", err)
+	}
+	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(data, keys.send)
+	if err != nil {
+		return err
+	}
+	encryptedPayload := append(nonce, ciphertext...)
+	cmdResponse := session.Call("wampshell.shell.upload").Args(remoteFile, encryptedPayload).Do()
+	if cmdResponse.Err != nil {
+		return fmt.Errorf("file upload error: %w", cmdResponse.Err)
+	}
+	encResp, err := cmdResponse.Args.Bytes(0)
+	if err != nil {
+		return fmt.Errorf("output parsing error: %w", err)
+	}
+	resp, err := berncrypt.DecryptChaCha20Poly1305(encResp[12:], encResp[:12], keys.receive)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Server response: %s\n", string(resp))
+	return nil
+}
+
+func downloadFile(session *xconn.Session, keys *keyPair, remoteFile, localFile string) error {
+	cmdResponse := session.Call("wampshell.shell.download").Arg(remoteFile).Do()
+	if cmdResponse.Err != nil {
+		return fmt.Errorf("file download error: %w", cmdResponse.Err)
+	}
+	encResp, err := cmdResponse.Args.Bytes(0)
+	if err != nil {
+		return fmt.Errorf("output parsing error: %w", err)
+	}
+	data, err := berncrypt.DecryptChaCha20Poly1305(encResp[12:], encResp[:12], keys.receive)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(localFile, data, 0600); err != nil {
+		return fmt.Errorf("failed to save file: %w", err)
+	}
+	fmt.Printf("Downloaded %s -> %s (%d bytes)\n", remoteFile, localFile, len(data))
+	return nil
+}
+
+func splitRemote(s string) (user, host, port, path string, err error) {
+	port = "8022"
+
+	if strings.Contains(s, "@") {
+		parts := strings.SplitN(s, "@", 2)
+		user, s = parts[0], parts[1]
+	}
+
+	parts := strings.SplitN(s, ":", 3)
+	switch len(parts) {
+	case 2:
+		host, path = parts[0], parts[1]
+	case 3:
+		host, port, path = parts[0], parts[1], parts[2]
+	default:
+		err = fmt.Errorf("invalid target: %s", s)
+	}
+
+	if user == "" {
+		user = os.Getenv("USER")
+		fmt.Println(user)
+	}
+	return
+}
+
+func main() {
+	if len(os.Args) != 3 {
+		fmt.Printf("Usage: wcp <source> <target>\n")
+		os.Exit(1)
+	}
+	src := os.Args[1]
+	dst := os.Args[2]
+
+	var mode string
+	var localFile, remoteFile string
+	var user, host, port string
+
+	if strings.Contains(src, ":") && !strings.Contains(dst, ":") {
+		mode = "download"
+		user, host, port, remoteFile, _ = splitRemote(src)
+		localFile = dst
+	} else if !strings.Contains(src, ":") && strings.Contains(dst, ":") {
+		mode = "upload"
+		localFile = src
+		user, host, port, remoteFile, _ = splitRemote(dst)
+	} else {
+		fmt.Println("Invalid usage: one of source/target must be remote (user@host:path)")
 		os.Exit(1)
 	}
 
@@ -117,7 +167,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	authenticator, err := auth.NewCryptoSignAuthenticator("", privateKey, nil)
+	authExtra := map[string]any{}
+	authExtra["user"] = user
+
+	authenticator, err := auth.NewCryptoSignAuthenticator("", privateKey, authExtra)
 	if err != nil {
 		fmt.Printf("Error creating crypto sign authenticator: %v\n", err)
 		os.Exit(1)
@@ -139,30 +192,24 @@ func main() {
 		panic(err)
 	}
 
-	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(data, keys.send)
-	if err != nil {
-		panic(err)
+	switch mode {
+	case "upload":
+		if strings.HasSuffix(remoteFile, "/") {
+			remoteFile += filepath.Base(localFile)
+		} else if remoteFile == "" {
+			remoteFile = filepath.Base(localFile)
+		}
+		if err := uploadFile(session, keys, localFile, remoteFile); err != nil {
+			fmt.Printf("Upload failed: %v\n", err)
+			os.Exit(1)
+		}
+	case "download":
+		if fi, err := os.Stat(localFile); err == nil && fi.IsDir() {
+			localFile = filepath.Join(localFile, filepath.Base(remoteFile))
+		}
+		if err := downloadFile(session, keys, remoteFile, localFile); err != nil {
+			fmt.Printf("Download failed: %v\n", err)
+			os.Exit(1)
+		}
 	}
-	encryptedPayload := make([]byte, len(nonce)+len(ciphertext))
-	copy(encryptedPayload, nonce)
-	copy(encryptedPayload[len(nonce):], ciphertext)
-
-	cmdResponse := session.Call("wampshell.shell.upload").Args(remoteFile, encryptedPayload).Do()
-	if cmdResponse.Err != nil {
-		fmt.Printf("File upload error: %v\n", cmdResponse.Err)
-		os.Exit(1)
-	}
-
-	encResp, err := cmdResponse.Args.Bytes(0)
-	if err != nil {
-		fmt.Printf("Output parsing error: %v\n", err)
-		os.Exit(1)
-	}
-
-	resp, err := berncrypt.DecryptChaCha20Poly1305(encResp[12:], encResp[:12], keys.receive)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("Server response: %s\n", string(resp))
 }

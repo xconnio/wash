@@ -1,3 +1,4 @@
+// wshd.go
 package main
 
 import (
@@ -24,6 +25,7 @@ const (
 	defaultHost              = "0.0.0.0"
 	procedureExec            = "wampshell.shell.exec"
 	procedureFileUpload      = "wampshell.shell.upload"
+	procedureFileDownload    = "wampshell.shell.download"
 	procedureWebRTCOffer     = "wampshell.webrtc.offer"
 	topicOffererOnCandidate  = "wampshell.webrtc.offerer.on_candidate"
 	topicAnswererOnCandidate = "wampshell.webrtc.answerer.on_candidate"
@@ -88,15 +90,6 @@ func handleRunCommand(e *wampshell.EncryptionManager) func(_ context.Context,
 	}
 }
 
-func fileUpload(filename string, data []byte) (string, error) {
-	cleanPath := filepath.Clean(filename)
-
-	if err := os.WriteFile(cleanPath, data, 0600); err != nil {
-		return "", fmt.Errorf("failed to write file: %w", err)
-	}
-	return fmt.Sprintf("file uploaded: %s (%d bytes)", cleanPath, len(data)), nil
-}
-
 func handleFileUpload(e *wampshell.EncryptionManager) func(_ context.Context,
 	inv *xconn.Invocation) *xconn.InvocationResult {
 	return func(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
@@ -127,23 +120,46 @@ func handleFileUpload(e *wampshell.EncryptionManager) func(_ context.Context,
 			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
 		}
 
-		output, err := fileUpload(filename, decryptedData)
-		if err != nil {
-			log.Printf("File upload error: %v", err)
+		if err := os.WriteFile(filepath.Clean(filename), decryptedData, 0600); err != nil {
 			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
 		}
-		log.Printf("Saved file: %s", filename)
 
-		ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305([]byte(output), key.Send)
+		msg := fmt.Sprintf("file uploaded: %s (%d bytes)", filename, len(decryptedData))
+		ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305([]byte(msg), key.Send)
 		if err != nil {
 			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
 		}
 
-		responsePayload := make([]byte, len(nonce)+len(ciphertext))
-		copy(responsePayload, nonce)
-		copy(responsePayload[len(nonce):], ciphertext)
+		return xconn.NewInvocationResult(append(nonce, ciphertext...))
+	}
+}
 
-		return xconn.NewInvocationResult(responsePayload)
+func handleFileDownload(e *wampshell.EncryptionManager) func(_ context.Context,
+	inv *xconn.Invocation) *xconn.InvocationResult {
+	return func(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
+		filename, err := inv.ArgString(0)
+		if err != nil {
+			return xconn.NewInvocationError("wamp.error.invalid_argument", err.Error())
+		}
+
+		e.Lock()
+		key, ok := e.Keys()[inv.Caller()]
+		e.Unlock()
+		if !ok {
+			return xconn.NewInvocationError("wamp.error.unavailable", "no encryption key for caller")
+		}
+
+		decryptedData, err := os.ReadFile(filepath.Clean(filename))
+		if err != nil {
+			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
+		}
+
+		ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(decryptedData, key.Send)
+		if err != nil {
+			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
+		}
+
+		return xconn.NewInvocationResult(append(nonce, ciphertext...))
 	}
 }
 
@@ -188,6 +204,7 @@ func main() {
 	}{
 		{procedureExec, handleRunCommand(encryption)},
 		{procedureFileUpload, handleFileUpload(encryption)},
+		{procedureFileDownload, handleFileDownload(encryption)},
 	}
 
 	server := xconn.NewServer(router, authenticator, nil)
@@ -222,7 +239,7 @@ func main() {
 	}
 
 	for _, proc := range procedures {
-		if err := registerProcedure(session, proc.name, proc.handler); err != nil {
+		if err = registerProcedure(session, proc.name, proc.handler); err != nil {
 			log.Fatal(err)
 		}
 	}
