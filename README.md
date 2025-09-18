@@ -1,5 +1,8 @@
 # WAMP Shell
-a peer-to-peer and routed shell environment
+This project provides a flexible shell access system with both client-server and peer-to-peer modes. 
+Clients can connect directly to servers, access servers behind NAT via a central WAMP router, 
+or establish peer-to-peer connections using WebRTC handshakes over WAMP. 
+It’s designed for routed, secure, and versatile remote shell management.
 
 ## Overview
 
@@ -12,7 +15,7 @@ a peer-to-peer and routed shell environment
 
 ## `wsh` – WAMP shell
 
-`wsh` connects to a remote `wshd` server (or peer-to-peer via WebRTC) and provides an encrypted shell over WAMP, either interactive or for executing a single command.
+`wsh` connects to a remote `wshd` server (or peer-to-peer via WebRTC) and provides an end-to-end encrypted shell over WAMP, either interactive or for executing a single command.
 
 ### Usage
 
