@@ -3,6 +3,7 @@ module github.com/xconnio/wampshell
 go 1.24.6
 
 require (
+	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/xconnio/berncrypt/go v0.0.0-20250825151556-89c24973ee7a
