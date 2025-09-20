@@ -45,7 +45,8 @@ func newInteractiveShellSession() *interactiveShellSession {
 	}
 }
 
-func (p *interactiveShellSession) startPtySession(caller uint64, inv *xconn.Invocation, sendKey []byte) (*os.File, error) {
+func (p *interactiveShellSession) startPtySession(caller uint64,
+	inv *xconn.Invocation, sendKey []byte) (*os.File, error) {
 	cmd := exec.Command("bash")
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -60,7 +61,8 @@ func (p *interactiveShellSession) startPtySession(caller uint64, inv *xconn.Invo
 	return ptmx, nil
 }
 
-func (p *interactiveShellSession) startOutputReader(caller uint64, inv *xconn.Invocation, ptmx *os.File, sendKey []byte) {
+func (p *interactiveShellSession) startOutputReader(caller uint64,
+	inv *xconn.Invocation, ptmx *os.File, sendKey []byte) {
 	go func() {
 		defer func() {
 			p.Lock()
@@ -110,11 +112,10 @@ func (p *interactiveShellSession) handleShell(e *wampshell.EncryptionManager) fu
 		p.Unlock()
 
 		if !ok {
-			newPtmx, err := p.startPtySession(caller, inv, key.Send)
+			_, err := p.startPtySession(caller, inv, key.Send)
 			if err != nil {
 				return xconn.NewInvocationError("io.xconn.error", err.Error())
 			}
-			ptmx = newPtmx
 			return xconn.NewInvocationError(xconn.ErrNoResult)
 		}
 

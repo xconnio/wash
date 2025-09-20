@@ -110,7 +110,7 @@ func startInteractiveShell(session *xconn.Session, keys *keyPair) {
 
 				plain, err := berncrypt.DecryptChaCha20Poly1305(encData[12:], encData[:12], keys.receive)
 				if err != nil {
-					fmt.Errorf("decryption error: %w", err)
+					_ = fmt.Errorf("decryption error: %w", err)
 				}
 
 				os.Stdout.Write(plain)
@@ -128,7 +128,7 @@ func startInteractiveShell(session *xconn.Session, keys *keyPair) {
 	}
 }
 
-func runCommand(session *xconn.Session, keys *keyPair, args []string) error {
+func runCommand(session *xconn.Session, keys *keyPair, args []string) {
 	b := []byte(strings.Join(args, " "))
 
 	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(b, keys.send)
@@ -155,7 +155,6 @@ func runCommand(session *xconn.Session, keys *keyPair, args []string) error {
 		panic(err)
 	}
 	fmt.Print(string(plain))
-	return nil
 }
 
 type Options struct {
