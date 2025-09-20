@@ -74,9 +74,7 @@ func startInteractiveShell(session *xconn.Session, keys *keyPair) {
 	if err != nil {
 		log.Fatalf("Failed to set raw mode: %s", err)
 	}
-	defer func(fd int, oldState *term.State) {
-		_ = term.Restore(fd, oldState)
-	}(fd, oldState)
+	defer func() { _ = term.Restore(fd, oldState) }()
 
 	firstProgress := true
 
@@ -112,7 +110,7 @@ func startInteractiveShell(session *xconn.Session, keys *keyPair) {
 
 				plain, err := berncrypt.DecryptChaCha20Poly1305(encData[12:], encData[:12], keys.receive)
 				if err != nil {
-					panic(err)
+					fmt.Errorf("decryption error: %w", err)
 				}
 
 				os.Stdout.Write(plain)
@@ -130,7 +128,7 @@ func startInteractiveShell(session *xconn.Session, keys *keyPair) {
 	}
 }
 
-func runCommand(session *xconn.Session, keys *keyPair, args []string) {
+func runCommand(session *xconn.Session, keys *keyPair, args []string) error {
 	b := []byte(strings.Join(args, " "))
 
 	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(b, keys.send)
@@ -157,6 +155,7 @@ func runCommand(session *xconn.Session, keys *keyPair, args []string) {
 		panic(err)
 	}
 	fmt.Print(string(plain))
+	return nil
 }
 
 type Options struct {
@@ -208,8 +207,7 @@ func main() {
 
 	authenticator, err := auth.NewCryptoSignAuthenticator("", privateKey, nil)
 	if err != nil {
-		fmt.Printf("Error creating crypto sign authenticator: %v", err)
-		os.Exit(1)
+		log.Fatal("Error creating crypto sign authenticator:", err)
 	}
 
 	client := xconn.Client{
