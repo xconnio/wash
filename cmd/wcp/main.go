@@ -11,6 +11,7 @@ import (
 
 	berncrypt "github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wampproto-go/auth"
+	wampprotocapnp "github.com/xconnio/wampproto-serializer-capnproto/go"
 	"github.com/xconnio/wampshell"
 	"github.com/xconnio/xconn-go"
 )
@@ -188,8 +189,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	capnprotoSerializerSpec := xconn.NewSerializerSpec(
+		wampprotocapnp.CapnprotoSplitSubProtocol, &wampprotocapnp.CapnprotoSerializer{},
+		xconn.SerializerID(wampprotocapnp.CapnprotoSplitSerializerID))
+
 	client := xconn.Client{
-		SerializerSpec: xconn.CapnprotoSplitSerializerSpec,
+		SerializerSpec: capnprotoSerializerSpec,
 		Authenticator:  authenticator,
 	}
 
