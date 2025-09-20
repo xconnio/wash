@@ -8,16 +8,20 @@ import (
 	"strings"
 
 	"github.com/jessevdk/go-flags"
+	"golang.org/x/term"
 
 	berncrypt "github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wamp-webrtc-go"
 	"github.com/xconnio/wampproto-go/auth"
+	wampprotocapnp "github.com/xconnio/wampproto-serializer-capnproto/go"
 	"github.com/xconnio/wampshell"
 	"github.com/xconnio/xconn-go"
 )
 
 const (
 	defaultRealm             = "wampshell"
+	procedureInteractive     = "wampshell.shell.interactive"
+	procedureExec            = "wampshell.shell.exec"
 	procedureWebRTCOffer     = "wampshell.webrtc.offer"
 	topicOffererOnCandidate  = "wampshell.webrtc.offerer.on_candidate"
 	topicAnswererOnCandidate = "wampshell.webrtc.answerer.on_candidate"
@@ -65,11 +69,103 @@ func exchangeKeys(session *xconn.Session) (*keyPair, error) {
 	}, nil
 }
 
+func startInteractiveShell(session *xconn.Session, keys *keyPair) {
+	fd := int(os.Stdin.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		log.Fatalf("Failed to set raw mode: %s", err)
+	}
+	defer func(fd int, oldState *term.State) {
+		_ = term.Restore(fd, oldState)
+	}(fd, oldState)
+
+	firstProgress := true
+
+	call := session.Call(procedureInteractive).
+		ProgressSender(func(ctx context.Context) *xconn.Progress {
+			if firstProgress {
+				firstProgress = false
+				return xconn.NewProgress()
+			}
+
+			buf := make([]byte, 1024)
+			n, err := os.Stdin.Read(buf)
+			if err != nil {
+				return xconn.NewFinalProgress()
+			}
+
+			ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(buf[:n], keys.send)
+			if err != nil {
+				panic(err)
+			}
+			payload := append(nonce, ciphertext...)
+
+			return xconn.NewProgress(payload)
+		}).
+		ProgressReceiver(func(result *xconn.InvocationResult) {
+			if len(result.Args) > 0 {
+				encData := result.Args[0].([]byte)
+
+				if len(encData) < 12 {
+					fmt.Fprintln(os.Stderr, "invalid payload from server")
+					os.Exit(1)
+				}
+
+				plain, err := berncrypt.DecryptChaCha20Poly1305(encData[12:], encData[:12], keys.receive)
+				if err != nil {
+					panic(err)
+				}
+
+				os.Stdout.Write(plain)
+			} else {
+				err = term.Restore(fd, oldState)
+				if err != nil {
+					return
+				}
+				os.Exit(0)
+			}
+		}).Do()
+
+	if call.Err != nil {
+		log.Fatalf("Shell error: %s", call.Err)
+	}
+}
+
+func runCommand(session *xconn.Session, keys *keyPair, args []string) {
+	b := []byte(strings.Join(args, " "))
+
+	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(b, keys.send)
+	if err != nil {
+		panic(err)
+	}
+
+	payload := append(nonce, ciphertext...)
+
+	cmdResponse := session.Call(procedureExec).Args(payload).Do()
+	if cmdResponse.Err != nil {
+		fmt.Printf("Command execution error: %v\n", cmdResponse.Err)
+		os.Exit(1)
+	}
+
+	output, err := cmdResponse.Args.Bytes(0)
+	if err != nil {
+		fmt.Printf("Output parsing error: %v\n", err)
+		os.Exit(1)
+	}
+
+	plain, err := berncrypt.DecryptChaCha20Poly1305(output[12:], output[:12], keys.receive)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Print(string(plain))
+}
+
 type Options struct {
-	PeerToPeer bool `long:"p2p" description:"Use WebRTC for peer-to-peer connection"`
-	Args       struct {
+	Interactive bool `short:"i" long:"interactive" description:"Force interactive shell"`
+	PeerToPeer  bool `long:"p2p" description:"Use WebRTC for peer-to-peer connection"`
+	Args        struct {
 		Target string   `positional-arg-name:"host" required:"true"`
-		Cmd    []string `positional-arg-name:"command" required:"true"`
+		Cmd    []string `positional-arg-name:"command"`
 	} `positional-args:"yes"`
 }
 
@@ -105,11 +201,6 @@ func main() {
 		port = "8022"
 	}
 
-	anyArgs := make([]any, len(args))
-	for i, a := range args {
-		anyArgs[i] = a
-	}
-
 	privateKey, err := wampshell.ReadPrivateKeyFromFile()
 	if err != nil {
 		fmt.Printf("Error reading private key: %v\n", err)
@@ -118,12 +209,16 @@ func main() {
 
 	authenticator, err := auth.NewCryptoSignAuthenticator("", privateKey, nil)
 	if err != nil {
-		fmt.Printf("Error creating crypto sign authenticator: %v\n", err)
+		fmt.Printf("Error creating crypto sign authenticator: %v", err)
 		os.Exit(1)
 	}
 
+	capnprotoSerializerSpec := xconn.NewSerializerSpec(
+		wampprotocapnp.CapnprotoSplitSubProtocol, &wampprotocapnp.CapnprotoSerializer{},
+		xconn.SerializerID(wampprotocapnp.CapnprotoSplitSerializerID))
+
 	client := xconn.Client{
-		SerializerSpec: xconn.CapnprotoSplitSerializerSpec,
+		SerializerSpec: capnprotoSerializerSpec,
 		Authenticator:  authenticator,
 	}
 
@@ -156,33 +251,9 @@ func main() {
 		panic(err)
 	}
 
-	b := []byte(strings.Join(args, " "))
-
-	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(b, keys.send)
-	if err != nil {
-		panic(err)
+	if opts.Interactive || len(args) == 0 {
+		startInteractiveShell(session, keys)
 	}
 
-	payload := make([]byte, len(nonce)+len(ciphertext))
-	copy(payload, nonce)
-	copy(payload[len(nonce):], ciphertext)
-
-	cmdResponse := session.Call("wampshell.shell.exec").Args(payload).Do()
-	if cmdResponse.Err != nil {
-		fmt.Printf("Command execution error: %v\n", cmdResponse.Err)
-		os.Exit(1)
-	}
-
-	output, err := cmdResponse.Args.Bytes(0)
-	if err != nil {
-		fmt.Printf("Output parsing error: %v\n", err)
-		os.Exit(1)
-	}
-
-	a, err := berncrypt.DecryptChaCha20Poly1305(output[12:], output[:12], keys.receive)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Print(string(a))
-
+	runCommand(session, keys, args)
 }
