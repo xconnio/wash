@@ -175,7 +175,6 @@ func registerProcedure(session *xconn.Session, procedure string, handler xconn.I
 }
 
 type Options struct {
-	Start struct{} `command:"start" description:"Start wshd server"`
 }
 
 func main() {
