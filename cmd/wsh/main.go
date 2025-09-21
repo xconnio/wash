@@ -8,10 +8,8 @@ import (
 	"strings"
 
 	"github.com/jessevdk/go-flags"
-
 	"github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wamp-webrtc-go"
-	"github.com/xconnio/wampproto-capnproto/go"
 	"github.com/xconnio/wampproto-go/auth"
 	"github.com/xconnio/wampshell"
 	"github.com/xconnio/xconn-go"
@@ -123,12 +121,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	capnprotoSerializerSpec := xconn.NewSerializerSpec(
-		wampprotocapnp.CapnprotoSplitSubProtocol, &wampprotocapnp.CapnprotoSerializer{},
-		xconn.SerializerID(wampprotocapnp.CapnprotoSplitSerializerID))
-
 	client := xconn.Client{
-		SerializerSpec: capnprotoSerializerSpec,
+		SerializerSpec: xconn.CBORSerializerSpec,
 		Authenticator:  authenticator,
 	}
 
