@@ -9,7 +9,7 @@ import (
 
 	"github.com/jessevdk/go-flags"
 
-	berncrypt "github.com/xconnio/berncrypt/go"
+	"github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wamp-webrtc-go"
 	"github.com/xconnio/wampproto-go/auth"
 	"github.com/xconnio/wampshell"
@@ -123,7 +123,7 @@ func main() {
 	}
 
 	client := xconn.Client{
-		SerializerSpec: xconn.CapnprotoSplitSerializerSpec,
+		SerializerSpec: xconn.CBORSerializerSpec,
 		Authenticator:  authenticator,
 	}
 
