@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jessevdk/go-flags"
+
 	"github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wamp-webrtc-go"
 	"github.com/xconnio/wampproto-go/auth"
