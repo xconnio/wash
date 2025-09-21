@@ -14,7 +14,7 @@ import (
 
 	"github.com/jessevdk/go-flags"
 
-	berncrypt "github.com/xconnio/berncrypt/go"
+	"github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wamp-webrtc-go"
 	"github.com/xconnio/wampproto-go/serializers"
 	"github.com/xconnio/wampshell"
@@ -223,6 +223,10 @@ func main() {
 	server := xconn.NewServer(router, authenticator, nil)
 	if server == nil {
 		log.Fatal("failed to create server")
+	}
+
+	if err = server.RegisterSpec(wampshell.CapnprotoSerializerSpec); err != nil {
+		log.Fatal(err)
 	}
 
 	closer, err := server.ListenAndServeRawSocket(xconn.NetworkTCP, address)
