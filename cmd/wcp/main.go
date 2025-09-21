@@ -189,7 +189,7 @@ func main() {
 	}
 
 	client := xconn.Client{
-		SerializerSpec: xconn.CBORSerializerSpec,
+		SerializerSpec: wampshell.CapnprotoSerializerSpec,
 		Authenticator:  authenticator,
 	}
 

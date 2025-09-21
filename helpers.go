@@ -6,7 +6,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/xconnio/wampproto-capnproto/go"
+	"github.com/xconnio/xconn-go"
 )
+
+var CapnprotoSerializerSpec = xconn.NewSerializerSpec( //nolint:gochecknoglobals
+	wampprotocapnp.CapnprotoSplitSubProtocol,
+	&wampprotocapnp.CapnprotoSerializer{},
+	xconn.SerializerID(wampprotocapnp.CapnprotoSplitSerializerID))
 
 func ReadPrivateKeyFromFile() (string, error) {
 	homeDir, err := RealHome()
