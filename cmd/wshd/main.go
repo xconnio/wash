@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/creack/pty"
 	"github.com/jessevdk/go-flags"
 
 	"github.com/xconnio/berncrypt/go"
@@ -34,14 +35,20 @@ const (
 )
 
 func runCommand(cmd string, args ...string) ([]byte, error) {
-	var stdout, stderr bytes.Buffer
-	command := exec.Command(cmd, args...)
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	err := command.Run()
-	if err != nil {
-		return stderr.Bytes(), err
+	fullCmd := cmd
+	if len(args) > 0 {
+		fullCmd += " " + strings.Join(args, " ")
 	}
+	c := exec.Command("bash", "-ic", fullCmd)
+	ptmx, err := pty.Start(c)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	var stdout bytes.Buffer
+	_, _ = stdout.ReadFrom(ptmx)
+
 	return stdout.Bytes(), nil
 }
 
