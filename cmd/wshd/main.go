@@ -45,54 +45,50 @@ func newInteractiveShellSession() *interactiveShellSession {
 	}
 }
 
-func (p *interactiveShellSession) startPtySession(caller uint64,
-	inv *xconn.Invocation, sendKey []byte) (*os.File, error) {
+func (p *interactiveShellSession) startPtySession(inv *xconn.Invocation, sendKey []byte) (*os.File, error) {
 	cmd := exec.Command("bash")
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start PTY: %w", err)
 	}
-
 	p.Lock()
-	p.ptmx[caller] = ptmx
+	p.ptmx[inv.Caller()] = ptmx
 	p.Unlock()
 
-	p.startOutputReader(caller, inv, ptmx, sendKey)
+	go p.startOutputReader(inv, ptmx, sendKey)
+
 	return ptmx, nil
 }
 
-func (p *interactiveShellSession) startOutputReader(caller uint64,
-	inv *xconn.Invocation, ptmx *os.File, sendKey []byte) {
-	go func() {
-		defer func() {
-			p.Lock()
-			if stored, exists := p.ptmx[caller]; exists && stored == ptmx {
-				delete(p.ptmx, caller)
-			}
-			p.Unlock()
-			if err := ptmx.Close(); err != nil {
-				log.Printf("Error closing PTY for caller %d: %v", caller, err)
-			}
-		}()
-
-		buf := make([]byte, 4096)
-		for {
-			n, err := ptmx.Read(buf)
-			if n > 0 {
-				ciphertext, nonce, errEnc := berncrypt.EncryptChaCha20Poly1305(buf[:n], sendKey)
-				if errEnc != nil {
-					log.Printf("Encryption failed in shell output for caller %d: %v", caller, errEnc)
-					return
-				}
-				payload := append(nonce, ciphertext...)
-				_ = inv.SendProgress([]any{payload}, nil)
-			}
-			if err != nil {
-				_ = inv.SendProgress(nil, nil)
-				return
-			}
+func (p *interactiveShellSession) startOutputReader(inv *xconn.Invocation, ptmx *os.File, sendKey []byte) {
+	caller := inv.Caller()
+	defer func() {
+		p.Lock()
+		if stored, exists := p.ptmx[caller]; exists && stored == ptmx {
+			delete(p.ptmx, caller)
+		}
+		p.Unlock()
+		if err := ptmx.Close(); err != nil {
+			log.Printf("Error closing PTY for caller %d: %v", caller, err)
 		}
 	}()
+	buf := make([]byte, 4096)
+	for {
+		n, err := ptmx.Read(buf)
+		if n > 0 {
+			ciphertext, nonce, errEnc := berncrypt.EncryptChaCha20Poly1305(buf[:n], sendKey)
+			if errEnc != nil {
+				log.Printf("Encryption failed in shell output for caller %d: %v", caller, errEnc)
+				return
+			}
+			payload := append(nonce, ciphertext...)
+			_ = inv.SendProgress([]any{payload}, nil)
+		}
+		if err != nil {
+			_ = inv.SendProgress(nil, nil)
+			return
+		}
+	}
 }
 
 func (p *interactiveShellSession) handleShell(e *wampshell.EncryptionManager) func(_ context.Context,
@@ -112,7 +108,7 @@ func (p *interactiveShellSession) handleShell(e *wampshell.EncryptionManager) fu
 		p.Unlock()
 
 		if !ok {
-			_, err := p.startPtySession(caller, inv, key.Send)
+			_, err := p.startPtySession(inv, key.Send)
 			if err != nil {
 				return xconn.NewInvocationError("io.xconn.error", err.Error())
 			}
@@ -160,14 +156,20 @@ func (p *interactiveShellSession) handleShell(e *wampshell.EncryptionManager) fu
 }
 
 func runCommand(cmd string, args ...string) ([]byte, error) {
-	var stdout, stderr bytes.Buffer
-	command := exec.Command(cmd, args...)
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	err := command.Run()
-	if err != nil {
-		return stderr.Bytes(), err
+	fullCmd := cmd
+	if len(args) > 0 {
+		fullCmd += " " + strings.Join(args, " ")
 	}
+	c := exec.Command("bash", "-ic", fullCmd)
+	ptmx, err := pty.Start(c)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	var stdout bytes.Buffer
+	_, _ = stdout.ReadFrom(ptmx)
+
 	return stdout.Bytes(), nil
 }
 
