@@ -24,10 +24,13 @@ func (a *ServerAuthenticator) Authenticate(request auth.Request) (auth.Response,
 		return nil, fmt.Errorf("invalid request type: %T", request)
 	}
 
-	pubKeyHex := cryptosignRequest.PublicKey()
-	if a.keyStore.HasKey(pubKeyHex) {
+	if a.keyStore.HasKey(cryptosignRequest.Realm(), cryptosignRequest.PublicKey()) {
 		return auth.NewResponse("", "anonymous", 0)
 	}
 
-	return nil, fmt.Errorf("public key not authorized")
+	return nil, fmt.Errorf("unauthorized")
+}
+
+func (a *ServerAuthenticator) Realms() map[string][]string {
+	return a.keyStore.keys
 }

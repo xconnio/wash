@@ -68,11 +68,11 @@ func exchangeKeys(session *xconn.Session) (*keyPair, error) {
 	}, nil
 }
 
-func startInteractiveShell(session *xconn.Session, keys *keyPair) {
+func startInteractiveShell(session *xconn.Session, keys *keyPair) error {
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
-		log.Fatalf("Failed to set raw mode: %s", err)
+		return fmt.Errorf("failed to set raw mode: %w", err)
 	}
 	defer func() { _ = term.Restore(fd, oldState) }()
 
@@ -93,7 +93,8 @@ func startInteractiveShell(session *xconn.Session, keys *keyPair) {
 
 			ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(buf[:n], keys.send)
 			if err != nil {
-				panic(err)
+				fmt.Printf("encryption error: %s", err)
+				os.Exit(1)
 			}
 			payload := append(nonce, ciphertext...)
 
@@ -126,35 +127,36 @@ func startInteractiveShell(session *xconn.Session, keys *keyPair) {
 	if call.Err != nil {
 		log.Fatalf("Shell error: %s", call.Err)
 	}
+	return nil
 }
 
-func runCommand(session *xconn.Session, keys *keyPair, args []string) {
+func runCommand(session *xconn.Session, keys *keyPair, args []string) error {
 	b := []byte(strings.Join(args, " "))
 
 	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(b, keys.send)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("encryption error: %w", err)
 	}
 
 	payload := append(nonce, ciphertext...)
 
 	cmdResponse := session.Call(procedureExec).Args(payload).Do()
 	if cmdResponse.Err != nil {
-		fmt.Printf("Command execution error: %v\n", cmdResponse.Err)
-		os.Exit(1)
+		return fmt.Errorf("command execution error: %w", cmdResponse.Err)
 	}
 
 	output, err := cmdResponse.Args.Bytes(0)
 	if err != nil {
-		fmt.Printf("Output parsing error: %v\n", err)
+		fmt.Printf("Output parsing error: %v", err)
 		os.Exit(1)
 	}
 
 	plain, err := berncrypt.DecryptChaCha20Poly1305(output[12:], output[:12], keys.receive)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("decryption error: %w", err)
 	}
 	fmt.Print(string(plain))
+	return nil
 }
 
 type Options struct {
@@ -244,8 +246,14 @@ func main() {
 	}
 
 	if opts.Interactive || len(args) == 0 {
-		startInteractiveShell(session, keys)
+		err := startInteractiveShell(session, keys)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
-	runCommand(session, keys, args)
+	err = runCommand(session, keys, args)
+	if err != nil {
+		log.Fatal(err)
+	}
 }

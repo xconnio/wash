@@ -64,9 +64,7 @@ func (p *interactiveShellSession) startOutputReader(inv *xconn.Invocation, ptmx 
 	caller := inv.Caller()
 	defer func() {
 		p.Lock()
-		if stored, exists := p.ptmx[caller]; exists && stored == ptmx {
-			delete(p.ptmx, caller)
-		}
+		delete(p.ptmx, caller)
 		p.Unlock()
 		if err := ptmx.Close(); err != nil {
 			log.Printf("Error closing PTY for caller %d: %v", caller, err)
@@ -144,7 +142,6 @@ func (p *interactiveShellSession) handleShell(e *wampshell.EncryptionManager) fu
 		}
 
 		p.Lock()
-		ptmx, ok = p.ptmx[caller]
 		delete(p.ptmx, caller)
 		p.Unlock()
 		if ok {
@@ -306,6 +303,21 @@ func registerProcedure(session *xconn.Session, procedure string, handler xconn.I
 	return nil
 }
 
+func addRealm(router *xconn.Router, realm string) {
+	if router.HasRealm(realm) {
+		return
+	}
+	if err := router.AddRealm(realm); err != nil {
+		log.Printf("failed to add realm %q: %v", realm, err)
+		return
+	}
+	if err := router.AutoDiscloseCaller(realm, true); err != nil {
+		log.Printf("failed to enable auto-disclose for %q: %v", realm, err)
+		return
+	}
+	log.Printf("Adding realm: %s", realm)
+}
+
 func main() {
 	address := fmt.Sprintf("%s:%d", defaultHost, defaultPort)
 	path := os.ExpandEnv("$HOME/.wampshell/authorized_keys")
@@ -320,12 +332,15 @@ func main() {
 	authenticator := wampshell.NewAuthenticator(keyStore)
 
 	router := xconn.NewRouter()
-	if err = router.AddRealm(defaultRealm); err != nil {
-		log.Fatal(err)
+	for realm := range authenticator.Realms() {
+		addRealm(router, realm)
 	}
-	if err = router.AutoDiscloseCaller(defaultRealm, true); err != nil {
-		log.Fatal(err)
-	}
+
+	keyStore.OnUpdate(func(keys map[string][]string) {
+		for realm := range keys {
+			addRealm(router, realm)
+		}
+	})
 
 	encryption := wampshell.NewEncryptionManager(router)
 	if err = encryption.Setup(); err != nil {
