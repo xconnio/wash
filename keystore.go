@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -12,37 +13,46 @@ import (
 )
 
 type KeyStore struct {
-	keys map[string]struct{}
-
+	keys     map[string][]string
+	onUpdate func(map[string][]string)
 	sync.RWMutex
 }
 
 func NewKeyStore() *KeyStore {
 	return &KeyStore{
-		keys: make(map[string]struct{}),
+		keys: make(map[string][]string),
 	}
 }
 
-func (k *KeyStore) HasKey(key string) bool {
+func (k *KeyStore) HasKey(realm, key string) bool {
 	k.RLock()
 	defer k.RUnlock()
 
-	_, ok := k.keys[key]
-	return ok
+	keys, ok := k.keys[realm]
+	if !ok {
+		return false
+	}
+
+	return slices.Contains(keys, key)
 }
 
-func (k *KeyStore) Update(keys []string) {
+func (k *KeyStore) OnUpdate(cb func(map[string][]string)) {
 	k.Lock()
 	defer k.Unlock()
+	k.onUpdate = cb
+}
 
-	k.keys = make(map[string]struct{})
-	for _, key := range keys {
-		k.keys[key] = struct{}{}
+func (k *KeyStore) Update(keys map[string][]string) {
+	k.Lock()
+	defer k.Unlock()
+	k.keys = keys
+	if k.onUpdate != nil {
+		go k.onUpdate(keys)
 	}
 }
 
-func readKeys(filePath string) ([]string, error) {
-	var keys []string
+func readKeys(filePath string) (map[string][]string, error) {
+	keys := make(map[string][]string)
 
 	if err := os.MkdirAll(filepath.Dir(filePath), 0700); err != nil {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
@@ -59,22 +69,30 @@ func readKeys(filePath string) ([]string, error) {
 		return nil, fmt.Errorf("failed to read %s: %w", filePath, err)
 	}
 
-	for _, key := range strings.Split(string(data), "\n") {
-		key = strings.TrimSpace(key)
-		if key == "" {
+	for _, keyWithRealm := range strings.Split(string(data), "\n") {
+		keyWithRealm = strings.TrimSpace(keyWithRealm)
+		if keyWithRealm == "" {
 			continue
 		}
 
-		keyBytes, err := hex.DecodeString(key)
-		if err != nil {
+		parts := strings.Fields(keyWithRealm)
+		keyHex := strings.TrimSpace(parts[0])
+
+		keyBytes, err := hex.DecodeString(keyHex)
+		if err != nil || len(keyBytes) != 32 {
 			continue
 		}
 
-		if len(keyBytes) != 32 {
-			continue
+		realm := "wampshell"
+		if len(parts) > 1 {
+			realm = strings.TrimSpace(parts[1])
 		}
 
-		keys = append(keys, key)
+		if keys[realm] == nil {
+			keys[realm] = make([]string, 0)
+		}
+
+		keys[realm] = append(keys[realm], parts[0])
 	}
 
 	return keys, nil
@@ -120,7 +138,7 @@ func (k *KeyStore) watch(filePath string, watcher *fsnotify.Watcher) {
 			k.Update(keys)
 
 		case event.Has(fsnotify.Remove), event.Has(fsnotify.Rename):
-			k.Update(nil)
+			k.Update(make(map[string][]string))
 		}
 	}
 }
