@@ -1,4 +1,3 @@
-// wshd.go
 package main
 
 import (
@@ -11,9 +10,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/creack/pty"
-	"github.com/jessevdk/go-flags"
 
 	"github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wamp-webrtc-go"
@@ -26,6 +25,7 @@ const (
 	defaultRealm             = "wampshell"
 	defaultPort              = 8022
 	defaultHost              = "0.0.0.0"
+	procedureInteractive     = "wampshell.shell.interactive"
 	procedureExec            = "wampshell.shell.exec"
 	procedureFileUpload      = "wampshell.shell.upload"
 	procedureFileDownload    = "wampshell.shell.download"
@@ -33,6 +33,124 @@ const (
 	topicOffererOnCandidate  = "wampshell.webrtc.offerer.on_candidate"
 	topicAnswererOnCandidate = "wampshell.webrtc.answerer.on_candidate"
 )
+
+type interactiveShellSession struct {
+	ptmx map[uint64]*os.File
+	sync.Mutex
+}
+
+func newInteractiveShellSession() *interactiveShellSession {
+	return &interactiveShellSession{
+		ptmx: make(map[uint64]*os.File),
+	}
+}
+
+func (p *interactiveShellSession) startPtySession(inv *xconn.Invocation, sendKey []byte) (*os.File, error) {
+	cmd := exec.Command("bash")
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start PTY: %w", err)
+	}
+	p.Lock()
+	p.ptmx[inv.Caller()] = ptmx
+	p.Unlock()
+
+	go p.startOutputReader(inv, ptmx, sendKey)
+
+	return ptmx, nil
+}
+
+func (p *interactiveShellSession) startOutputReader(inv *xconn.Invocation, ptmx *os.File, sendKey []byte) {
+	caller := inv.Caller()
+	defer func() {
+		p.Lock()
+		delete(p.ptmx, caller)
+		p.Unlock()
+		if err := ptmx.Close(); err != nil {
+			log.Printf("Error closing PTY for caller %d: %v", caller, err)
+		}
+	}()
+	buf := make([]byte, 4096)
+	for {
+		n, err := ptmx.Read(buf)
+		if n > 0 {
+			ciphertext, nonce, errEnc := berncrypt.EncryptChaCha20Poly1305(buf[:n], sendKey)
+			if errEnc != nil {
+				log.Printf("Encryption failed in shell output for caller %d: %v", caller, errEnc)
+				return
+			}
+			payload := append(nonce, ciphertext...)
+			_ = inv.SendProgress([]any{payload}, nil)
+		}
+		if err != nil {
+			_ = inv.SendProgress(nil, nil)
+			return
+		}
+	}
+}
+
+func (p *interactiveShellSession) handleShell(e *wampshell.EncryptionManager) func(_ context.Context,
+	inv *xconn.Invocation) *xconn.InvocationResult {
+	return func(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
+		caller := inv.Caller()
+
+		e.Lock()
+		key, ok := e.Keys()[inv.Caller()]
+		e.Unlock()
+		if !ok {
+			return xconn.NewInvocationError("wamp.error.unavailable", "unavailable")
+		}
+
+		p.Lock()
+		ptmx, ok := p.ptmx[caller]
+		p.Unlock()
+
+		if !ok {
+			_, err := p.startPtySession(inv, key.Send)
+			if err != nil {
+				return xconn.NewInvocationError("io.xconn.error", err.Error())
+			}
+			return xconn.NewInvocationError(xconn.ErrNoResult)
+		}
+
+		if inv.Progress() {
+			payload, err := inv.ArgBytes(0)
+			if err != nil {
+				return xconn.NewInvocationError("wamp.error.invalid_argument", err.Error())
+			}
+			if len(payload) < 12 {
+				return xconn.NewInvocationError("wamp.error.invalid_argument", "payload too short")
+			}
+
+			decrypted, err := berncrypt.DecryptChaCha20Poly1305(payload[12:], payload[:12], key.Receive)
+			if err != nil {
+				p.Lock()
+				if storedPtmx, exists := p.ptmx[caller]; exists {
+					storedPtmx.Close()
+					delete(p.ptmx, caller)
+				}
+				p.Unlock()
+				return xconn.NewInvocationError("io.xconn.error", err.Error())
+			}
+
+			_, err = ptmx.Write(decrypted)
+			if err != nil {
+				log.Printf("Failed to write to PTY for caller %d: %v", caller, err)
+				return xconn.NewInvocationError("io.xconn.error", err.Error())
+			}
+			return xconn.NewInvocationError(xconn.ErrNoResult)
+		}
+
+		p.Lock()
+		delete(p.ptmx, caller)
+		p.Unlock()
+		if ok {
+			ptmx.Close()
+		}
+
+		return xconn.NewInvocationResult()
+	}
+}
 
 func runCommand(cmd string, args ...string) ([]byte, error) {
 	fullCmd := cmd
@@ -78,7 +196,6 @@ func handleRunCommand(e *wampshell.EncryptionManager) func(_ context.Context,
 		newStrs := strings.Split(s, " ")
 
 		cmd := newStrs[0]
-
 		rawArgs := newStrs[1:]
 
 		output, err := runCommand(cmd, rawArgs...)
@@ -88,7 +205,8 @@ func handleRunCommand(e *wampshell.EncryptionManager) func(_ context.Context,
 
 		ciphertext1, nonce1, err1 := berncrypt.EncryptChaCha20Poly1305(output, key.Send)
 		if err1 != nil {
-			panic(err)
+			log.Printf("Encryption failed in runCommand: %v", err1)
+			return xconn.NewInvocationError("wamp.error.internal_error", err1.Error())
 		}
 
 		payload1 := make([]byte, len(nonce1)+len(ciphertext1))
@@ -102,6 +220,8 @@ func handleRunCommand(e *wampshell.EncryptionManager) func(_ context.Context,
 func handleFileUpload(e *wampshell.EncryptionManager) func(_ context.Context,
 	inv *xconn.Invocation) *xconn.InvocationResult {
 	return func(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
+		log.Printf("handleFileUpload called for caller: %d", inv.Caller())
+
 		if len(inv.Args()) < 2 {
 			return xconn.NewInvocationError("wamp.error.invalid_argument", "expected filename + encrypted data")
 		}
@@ -146,6 +266,8 @@ func handleFileUpload(e *wampshell.EncryptionManager) func(_ context.Context,
 func handleFileDownload(e *wampshell.EncryptionManager) func(_ context.Context,
 	inv *xconn.Invocation) *xconn.InvocationResult {
 	return func(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
+		log.Printf("handleFileDownload called for caller: %d", inv.Caller())
+
 		filename, err := inv.ArgString(0)
 		if err != nil {
 			return xconn.NewInvocationError("wamp.error.invalid_argument", err.Error())
@@ -196,18 +318,7 @@ func addRealm(router *xconn.Router, realm string) {
 	log.Printf("Adding realm: %s", realm)
 }
 
-type Options struct {
-}
-
 func main() {
-	var opts Options
-	parser := flags.NewParser(&opts, flags.Default)
-
-	_, err := parser.Parse()
-	if err != nil {
-		os.Exit(1)
-	}
-
 	address := fmt.Sprintf("%s:%d", defaultHost, defaultPort)
 	path := os.ExpandEnv("$HOME/.wampshell/authorized_keys")
 
@@ -240,6 +351,7 @@ func main() {
 		name    string
 		handler xconn.InvocationHandler
 	}{
+		{procedureInteractive, newInteractiveShellSession().handleShell(encryption)},
 		{procedureExec, handleRunCommand(encryption)},
 		{procedureFileUpload, handleFileUpload(encryption)},
 		{procedureFileDownload, handleFileDownload(encryption)},
@@ -277,6 +389,7 @@ func main() {
 	}
 	err = webRtcManager.Setup(cfg)
 	if err != nil {
+		log.Printf("Failed to setup WebRTC: %v", err)
 		return
 	}
 
