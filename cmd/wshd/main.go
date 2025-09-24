@@ -332,6 +332,8 @@ func main() {
 	authenticator := wampshell.NewAuthenticator(keyStore)
 
 	router := xconn.NewRouter()
+	addRealm(router, defaultRealm)
+
 	for realm := range authenticator.Realms() {
 		addRealm(router, realm)
 	}
