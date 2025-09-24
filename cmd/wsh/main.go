@@ -26,49 +26,7 @@ const (
 	topicAnswererOnCandidate = "wampshell.webrtc.answerer.on_candidate"
 )
 
-type keyPair struct {
-	send    []byte
-	receive []byte
-}
-
-func exchangeKeys(session *xconn.Session) (*keyPair, error) {
-	publicKey, privateKey, err := berncrypt.CreateX25519KeyPair()
-	if err != nil {
-		return nil, err
-	}
-
-	response := session.Call("wampshell.key.exchange").Arg(publicKey).Do()
-	if response.Err != nil {
-		return nil, response.Err
-	}
-
-	publicKeyPeer, err := response.Args.Bytes(0)
-	if err != nil {
-		return nil, err
-	}
-
-	sharedSecret, err := berncrypt.PerformKeyExchange(privateKey, publicKeyPeer)
-	if err != nil {
-		return nil, err
-	}
-
-	receiveKey, err := berncrypt.DeriveKeyHKDF(sharedSecret, []byte("backendToFrontend"))
-	if err != nil {
-		return nil, err
-	}
-
-	sendKey, err := berncrypt.DeriveKeyHKDF(sharedSecret, []byte("frontendToBackend"))
-	if err != nil {
-		return nil, err
-	}
-
-	return &keyPair{
-		send:    sendKey,
-		receive: receiveKey,
-	}, nil
-}
-
-func startInteractiveShell(session *xconn.Session, keys *keyPair) error {
+func startInteractiveShell(session *xconn.Session, keys *wampshell.KeyPair) error {
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
@@ -91,7 +49,7 @@ func startInteractiveShell(session *xconn.Session, keys *keyPair) error {
 				return xconn.NewFinalProgress()
 			}
 
-			ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(buf[:n], keys.send)
+			ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(buf[:n], keys.Send)
 			if err != nil {
 				fmt.Printf("encryption error: %s", err)
 				os.Exit(1)
@@ -109,7 +67,7 @@ func startInteractiveShell(session *xconn.Session, keys *keyPair) error {
 					os.Exit(1)
 				}
 
-				plain, err := berncrypt.DecryptChaCha20Poly1305(encData[12:], encData[:12], keys.receive)
+				plain, err := berncrypt.DecryptChaCha20Poly1305(encData[12:], encData[:12], keys.Receive)
 				if err != nil {
 					_ = fmt.Errorf("decryption error: %w", err)
 				}
@@ -130,10 +88,10 @@ func startInteractiveShell(session *xconn.Session, keys *keyPair) error {
 	return nil
 }
 
-func runCommand(session *xconn.Session, keys *keyPair, args []string) error {
+func runCommand(session *xconn.Session, keys *wampshell.KeyPair, args []string) error {
 	b := []byte(strings.Join(args, " "))
 
-	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(b, keys.send)
+	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(b, keys.Send)
 	if err != nil {
 		return fmt.Errorf("encryption error: %w", err)
 	}
@@ -151,7 +109,7 @@ func runCommand(session *xconn.Session, keys *keyPair, args []string) error {
 		os.Exit(1)
 	}
 
-	plain, err := berncrypt.DecryptChaCha20Poly1305(output[12:], output[:12], keys.receive)
+	plain, err := berncrypt.DecryptChaCha20Poly1305(output[12:], output[:12], keys.Receive)
 	if err != nil {
 		return fmt.Errorf("decryption error: %w", err)
 	}
@@ -240,7 +198,7 @@ func main() {
 		}
 	}
 
-	keys, err := exchangeKeys(session)
+	keys, err := wampshell.ExchangeKeys(session)
 	if err != nil {
 		panic(err)
 	}

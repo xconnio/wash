@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	berncrypt "github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wampproto-capnproto/go"
 	"github.com/xconnio/xconn-go"
 )
@@ -54,4 +55,40 @@ func RunningInSnap() bool {
 	cmd := exec.Command("snapctl", "get", "none")
 	err := cmd.Run()
 	return err == nil
+}
+
+func ExchangeKeys(session *xconn.Session) (*KeyPair, error) {
+	publicKey, privateKey, err := berncrypt.CreateX25519KeyPair()
+	if err != nil {
+		return nil, err
+	}
+
+	response := session.Call("wampshell.key.exchange").Arg(publicKey).Do()
+	if response.Err != nil {
+		return nil, response.Err
+	}
+
+	publicKeyPeer, err := response.Args.Bytes(0)
+	if err != nil {
+		return nil, err
+	}
+
+	sharedSecret, err := berncrypt.PerformKeyExchange(privateKey, publicKeyPeer)
+	if err != nil {
+		return nil, err
+	}
+
+	receiveKey, err := berncrypt.DeriveKeyHKDF(sharedSecret, []byte("backendToFrontend"))
+	if err != nil {
+		return nil, err
+	}
+
+	sendKey, err := berncrypt.DeriveKeyHKDF(sharedSecret, []byte("frontendToBackend"))
+	if err != nil {
+		return nil, err
+	}
+	return &KeyPair{
+		Send:    sendKey,
+		Receive: receiveKey,
+	}, nil
 }
