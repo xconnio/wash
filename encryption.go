@@ -115,3 +115,10 @@ func (e *EncryptionManager) TestEcho(_ context.Context, invocation *xconn.Invoca
 func (e *EncryptionManager) Keys() map[uint64]*KeyPair {
 	return e.keys
 }
+
+func (e *EncryptionManager) Key(sessionID uint64) (*KeyPair, bool) {
+	e.Lock()
+	defer e.Unlock()
+	key, ok := e.keys[sessionID]
+	return key, ok
+}

@@ -94,9 +94,7 @@ func (p *interactiveShellSession) handleShell(e *wampshell.EncryptionManager) fu
 	return func(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
 		caller := inv.Caller()
 
-		e.Lock()
-		key, ok := e.Keys()[inv.Caller()]
-		e.Unlock()
+		key, ok := e.Key(inv.Caller())
 		if !ok {
 			return xconn.NewInvocationError("wamp.error.unavailable", "unavailable")
 		}
@@ -173,21 +171,17 @@ func runCommand(cmd string, args ...string) ([]byte, error) {
 func handleRunCommand(e *wampshell.EncryptionManager) func(_ context.Context,
 	inv *xconn.Invocation) *xconn.InvocationResult {
 	return func(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
-
-		payload, err := inv.ArgBytes(0)
+		encryptedPayload, err := inv.ArgBytes(0)
 		if err != nil {
 			return xconn.NewInvocationError("wamp.error.invalid_argument", err.Error())
 		}
 
-		e.Lock()
-		key, ok := e.Keys()[inv.Caller()]
-		e.Unlock()
-
+		key, ok := e.Key(inv.Caller())
 		if !ok {
 			return xconn.NewInvocationError("wamp.error.unavailable", "unavailable")
 		}
 
-		decryptedPayload, err := berncrypt.DecryptChaCha20Poly1305(payload[12:], payload[:12], key.Receive)
+		decryptedPayload, err := berncrypt.DecryptChaCha20Poly1305(encryptedPayload[12:], encryptedPayload[:12], key.Receive)
 		if err != nil {
 			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
 		}
@@ -203,17 +197,13 @@ func handleRunCommand(e *wampshell.EncryptionManager) func(_ context.Context,
 			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
 		}
 
-		ciphertext1, nonce1, err1 := berncrypt.EncryptChaCha20Poly1305(output, key.Send)
-		if err1 != nil {
-			log.Printf("Encryption failed in runCommand: %v", err1)
-			return xconn.NewInvocationError("wamp.error.internal_error", err1.Error())
+		ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(output, key.Send)
+		if err != nil {
+			log.Printf("Encryption failed in runCommand: %v", err)
+			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
 		}
 
-		payload1 := make([]byte, len(nonce1)+len(ciphertext1))
-		copy(payload1, nonce1)
-		copy(payload1[len(nonce1):], ciphertext1)
-
-		return xconn.NewInvocationResult(payload1)
+		return xconn.NewInvocationResult(append(nonce, ciphertext...))
 	}
 }
 
@@ -237,9 +227,7 @@ func handleFileUpload(e *wampshell.EncryptionManager) func(_ context.Context,
 				fmt.Sprintf("file content must be []byte, got %s", err.Error()))
 		}
 
-		e.Lock()
-		key, ok := e.Keys()[inv.Caller()]
-		e.Unlock()
+		key, ok := e.Key(inv.Caller())
 		if !ok {
 			return xconn.NewInvocationError("wamp.error.unavailable", "no encryption key for caller")
 		}
@@ -273,9 +261,7 @@ func handleFileDownload(e *wampshell.EncryptionManager) func(_ context.Context,
 			return xconn.NewInvocationError("wamp.error.invalid_argument", err.Error())
 		}
 
-		e.Lock()
-		key, ok := e.Keys()[inv.Caller()]
-		e.Unlock()
+		key, ok := e.Key(inv.Caller())
 		if !ok {
 			return xconn.NewInvocationError("wamp.error.unavailable", "no encryption key for caller")
 		}
@@ -292,15 +278,6 @@ func handleFileDownload(e *wampshell.EncryptionManager) func(_ context.Context,
 
 		return xconn.NewInvocationResult(append(nonce, ciphertext...))
 	}
-}
-
-func registerProcedure(session *xconn.Session, procedure string, handler xconn.InvocationHandler) error {
-	response := session.Register(procedure, handler).Do()
-	if response.Err != nil {
-		return fmt.Errorf("failed to register procedure %q: %w", procedure, response.Err)
-	}
-	log.Printf("Procedure registered: %s", procedure)
-	return nil
 }
 
 func addRealm(router *xconn.Router, realm string) {
@@ -332,6 +309,8 @@ func main() {
 	authenticator := wampshell.NewAuthenticator(keyStore)
 
 	router := xconn.NewRouter()
+	addRealm(router, defaultRealm)
+
 	for realm := range authenticator.Realms() {
 		addRealm(router, realm)
 	}
@@ -394,9 +373,11 @@ func main() {
 	}
 
 	for _, proc := range procedures {
-		if err = registerProcedure(session, proc.name, proc.handler); err != nil {
-			log.Fatal(err)
+		registerResponse := session.Register(proc.name, proc.handler).Do()
+		if registerResponse.Err != nil {
+			log.Fatalln(registerResponse.Err)
 		}
+		log.Printf("Procedure registered: %s", proc.name)
 	}
 
 	log.Printf("listening on rs://%s", address)
