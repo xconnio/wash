@@ -27,6 +27,8 @@ const (
 )
 
 func startInteractiveShell(session *xconn.Session, keys *wampshell.KeyPair) error {
+	const nonceSize = 12
+
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
@@ -36,54 +38,59 @@ func startInteractiveShell(session *xconn.Session, keys *wampshell.KeyPair) erro
 
 	firstProgress := true
 
+	readAndEncrypt := func() (*xconn.Progress, error) {
+		buf := make([]byte, 1024)
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			return xconn.NewFinalProgress(), nil
+		}
+
+		ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(buf[:n], keys.Send)
+		if err != nil {
+			return nil, fmt.Errorf("encryption error: %w", err)
+		}
+		payload := append(nonce, ciphertext...)
+		return xconn.NewProgress(payload), nil
+	}
+
+	decryptAndWrite := func(encData []byte) error {
+		if len(encData) < nonceSize {
+			return fmt.Errorf("invalid payload from server: too short")
+		}
+		plain, err := berncrypt.DecryptChaCha20Poly1305(encData[nonceSize:], encData[:nonceSize], keys.Receive)
+		if err != nil {
+			return fmt.Errorf("decryption error: %w", err)
+		}
+		_, err = os.Stdout.Write(plain)
+		return err
+	}
+
 	call := session.Call(procedureInteractive).
 		ProgressSender(func(ctx context.Context) *xconn.Progress {
 			if firstProgress {
 				firstProgress = false
 				return xconn.NewProgress()
 			}
-
-			buf := make([]byte, 1024)
-			n, err := os.Stdin.Read(buf)
+			progress, err := readAndEncrypt()
 			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
 				return xconn.NewFinalProgress()
 			}
-
-			ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(buf[:n], keys.Send)
-			if err != nil {
-				fmt.Printf("encryption error: %s", err)
-				os.Exit(1)
-			}
-			payload := append(nonce, ciphertext...)
-
-			return xconn.NewProgress(payload)
+			return progress
 		}).
 		ProgressReceiver(func(result *xconn.InvocationResult) {
 			if len(result.Args) > 0 {
-				encData := result.Args[0].([]byte)
-
-				if len(encData) < 12 {
-					fmt.Fprintln(os.Stderr, "invalid payload from server")
-					os.Exit(1)
+				if err := decryptAndWrite(result.Args[0].([]byte)); err != nil {
+					fmt.Fprintln(os.Stderr, err)
 				}
-
-				plain, err := berncrypt.DecryptChaCha20Poly1305(encData[12:], encData[:12], keys.Receive)
-				if err != nil {
-					_ = fmt.Errorf("decryption error: %w", err)
-				}
-
-				os.Stdout.Write(plain)
 			} else {
-				err = term.Restore(fd, oldState)
-				if err != nil {
-					return
-				}
+				_ = term.Restore(fd, oldState)
 				os.Exit(0)
 			}
 		}).Do()
 
 	if call.Err != nil {
-		log.Fatalf("Shell error: %s", call.Err)
+		return fmt.Errorf("shell error: %w", call.Err)
 	}
 	return nil
 }
@@ -98,22 +105,21 @@ func runCommand(session *xconn.Session, keys *wampshell.KeyPair, args []string) 
 
 	payload := append(nonce, ciphertext...)
 
-	cmdResponse := session.Call(procedureExec).Args(payload).Do()
-	if cmdResponse.Err != nil {
-		return fmt.Errorf("command execution error: %w", cmdResponse.Err)
+	callResponse := session.Call(procedureExec).Args(payload).Do()
+	if callResponse.Err != nil {
+		return fmt.Errorf("command execution failed: %w", callResponse.Err)
 	}
 
-	output, err := cmdResponse.Args.Bytes(0)
+	encryptedOutput, err := callResponse.Args.Bytes(0)
 	if err != nil {
-		fmt.Printf("Output parsing error: %v", err)
-		os.Exit(1)
+		return fmt.Errorf("output parsing error: %w", err)
 	}
 
-	plain, err := berncrypt.DecryptChaCha20Poly1305(output[12:], output[:12], keys.Receive)
+	plainOutput, err := berncrypt.DecryptChaCha20Poly1305(encryptedOutput[12:], encryptedOutput[:12], keys.Receive)
 	if err != nil {
-		return fmt.Errorf("decryption error: %w", err)
+		return fmt.Errorf("decryption failed: %w", err)
 	}
-	fmt.Print(string(plain))
+	fmt.Print(string(plainOutput))
 	return nil
 }
 
@@ -132,7 +138,7 @@ func main() {
 
 	_, err := parser.Parse()
 	if err != nil {
-		os.Exit(1)
+		log.Fatalln(err)
 	}
 
 	target := opts.Args.Target
@@ -145,8 +151,7 @@ func main() {
 	} else {
 		user := os.Getenv("USER")
 		if user == "" {
-			fmt.Println("Error: user not provided and $USER not set")
-			os.Exit(1)
+			log.Fatalln("Error: user not provided and $USER not set")
 		}
 		host = target
 	}
@@ -160,8 +165,7 @@ func main() {
 
 	privateKey, err := wampshell.ReadPrivateKeyFromFile()
 	if err != nil {
-		fmt.Printf("Error reading private key: %v\n", err)
-		os.Exit(1)
+		log.Fatalf("Error reading private key: %s", err)
 	}
 
 	authenticator, err := auth.NewCryptoSignAuthenticator("", privateKey, nil)
@@ -200,7 +204,7 @@ func main() {
 
 	keys, err := wampshell.ExchangeKeys(session)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Failed to exchange keys: %v", err)
 	}
 
 	if opts.Interactive || len(args) == 0 {
