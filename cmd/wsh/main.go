@@ -42,7 +42,7 @@ func startInteractiveShell(session *xconn.Session, keys *wampshell.KeyPair) erro
 		buf := make([]byte, 1024)
 		n, err := os.Stdin.Read(buf)
 		if err != nil {
-			return xconn.NewFinalProgress(), nil
+			return nil, fmt.Errorf("read error: %w", err)
 		}
 
 		ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305(buf[:n], keys.Send)
