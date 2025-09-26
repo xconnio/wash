@@ -14,7 +14,7 @@ import (
 
 	"github.com/creack/pty"
 
-	"github.com/xconnio/berncrypt/go"
+	berncrypt "github.com/xconnio/berncrypt/go"
 	"github.com/xconnio/wamp-webrtc-go"
 	"github.com/xconnio/wampproto-go/serializers"
 	"github.com/xconnio/wampshell"
@@ -93,7 +93,6 @@ func (p *interactiveShellSession) handleShell(e *wampshell.EncryptionManager) fu
 	inv *xconn.Invocation) *xconn.InvocationResult {
 	return func(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
 		caller := inv.Caller()
-
 		key, ok := e.Key(inv.Caller())
 		if !ok {
 			return xconn.NewInvocationError("wamp.error.unavailable", "unavailable")
@@ -296,6 +295,11 @@ func addRealm(router *xconn.Router, realm string) {
 }
 
 func main() {
+	loadConfig, err := wampshell.LoadConfig()
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err)
+	}
+
 	address := fmt.Sprintf("%s:%d", defaultHost, defaultPort)
 	path := os.ExpandEnv("$HOME/.wampshell/authorized_keys")
 
@@ -308,9 +312,13 @@ func main() {
 
 	authenticator := wampshell.NewAuthenticator(keyStore)
 
+	privateKey, err := wampshell.ReadPrivateKeyFromFile()
+	if err != nil {
+		log.Fatalf("Error reading private key: %s", err)
+	}
+
 	router := xconn.NewRouter()
 	addRealm(router, defaultRealm)
-
 	for realm := range authenticator.Realms() {
 		addRealm(router, realm)
 	}
@@ -356,28 +364,42 @@ func main() {
 		log.Fatalf("failed to connect to server: %v", err)
 	}
 
-	webRtcManager := wamp_webrtc_go.NewWebRTCHandler()
-	cfg := &wamp_webrtc_go.ProviderConfig{
-		Session:                     session,
-		ProcedureHandleOffer:        procedureWebRTCOffer,
-		TopicHandleRemoteCandidates: topicAnswererOnCandidate,
-		TopicPublishLocalCandidate:  topicOffererOnCandidate,
-		Serializer:                  &serializers.CBORSerializer{},
-		Authenticator:               authenticator,
-		Router:                      router,
-	}
-	err = webRtcManager.Setup(cfg)
-	if err != nil {
-		log.Printf("Failed to setup WebRTC: %v", err)
-		return
+	var sessions []*xconn.Session
+	sessions = append(sessions, session)
+
+	for _, p := range loadConfig.Principals {
+		sess, err := xconn.ConnectCryptosign(context.Background(), p.URL, p.Realm, "", privateKey)
+		if err != nil {
+			continue
+		}
+
+		sessions = append(sessions, sess)
 	}
 
-	for _, proc := range procedures {
-		registerResponse := session.Register(proc.name, proc.handler).Do()
-		if registerResponse.Err != nil {
-			log.Fatalln(registerResponse.Err)
+	for _, sess := range sessions {
+		webRtcManager := wamp_webrtc_go.NewWebRTCHandler()
+		cfg := &wamp_webrtc_go.ProviderConfig{
+			Session:                     sess,
+			ProcedureHandleOffer:        procedureWebRTCOffer,
+			TopicHandleRemoteCandidates: topicAnswererOnCandidate,
+			TopicPublishLocalCandidate:  topicOffererOnCandidate,
+			Serializer:                  &serializers.CBORSerializer{},
+			Authenticator:               authenticator,
+			Router:                      router,
 		}
-		log.Printf("Procedure registered: %s", proc.name)
+		err = webRtcManager.Setup(cfg)
+		if err != nil {
+			log.Printf("Failed to setup WebRTC: %v", err)
+			return
+		}
+
+		for _, proc := range procedures {
+			registerResponse := sess.Register(proc.name, proc.handler).Do()
+			if registerResponse.Err != nil {
+				log.Fatalln(registerResponse.Err)
+			}
+			log.Printf("Procedure registered: %s", proc.name)
+		}
 	}
 
 	log.Printf("listening on rs://%s", address)
