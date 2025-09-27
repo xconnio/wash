@@ -12,6 +12,7 @@ require (
 	github.com/xconnio/wampproto-go v0.0.0-20250915142018-1ae321b40fec
 	github.com/xconnio/xconn-go v0.0.0-20250918124058-95e16bcd2454
 	golang.org/x/term v0.35.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
