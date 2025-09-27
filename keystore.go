@@ -142,3 +142,24 @@ func (k *KeyStore) watch(filePath string, watcher *fsnotify.Watcher) {
 		}
 	}
 }
+
+func (k *KeyStore) AuthorizedKeys() ([]string, error) {
+	k.RLock()
+	defer k.RUnlock()
+
+	if len(k.keys) == 0 {
+		return nil, fmt.Errorf("no keys in KeyStore")
+	}
+
+	var keys []string
+	for realm, ks := range k.keys {
+		for _, key := range ks {
+			if realm == "wampshell" {
+				keys = append(keys, key)
+			} else {
+				keys = append(keys, fmt.Sprintf("%s %s", key, realm))
+			}
+		}
+	}
+	return keys, nil
+}

@@ -29,6 +29,7 @@ const (
 	procedureExec            = "wampshell.shell.exec"
 	procedureFileUpload      = "wampshell.shell.upload"
 	procedureFileDownload    = "wampshell.shell.download"
+	procedureSyncKeys        = "wampshell.shell.keys.sync"
 	procedureWebRTCOffer     = "wampshell.webrtc.offer"
 	topicOffererOnCandidate  = "wampshell.webrtc.offerer.on_candidate"
 	topicAnswererOnCandidate = "wampshell.webrtc.answerer.on_candidate"
@@ -294,6 +295,69 @@ func addRealm(router *xconn.Router, realm string) {
 	log.Printf("Adding realm: %s", realm)
 }
 
+func SyncAuthorizedKeys(session *xconn.Session, keys *wampshell.KeyPair, keyStore *wampshell.KeyStore) error {
+	lines, err := keyStore.AuthorizedKeys()
+	if err != nil {
+		return fmt.Errorf("failed to get authorized keys: %w", err)
+	}
+
+	plaintext := strings.Join(lines, "\n")
+	if plaintext == "" {
+		return fmt.Errorf("no keys to sync")
+	}
+
+	ciphertext, nonce, err := berncrypt.EncryptChaCha20Poly1305([]byte(plaintext), keys.Send)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt keys: %w", err)
+	}
+	payload := append(nonce, ciphertext...)
+
+	callResponse := session.Call(procedureSyncKeys).Args(payload).Do()
+	if callResponse.Err != nil {
+		return fmt.Errorf("sync keys call failed: %w", callResponse.Err)
+	}
+
+	return nil
+}
+
+func handleSyncKeys(realm string, keyStore *wampshell.KeyStore,
+	e *wampshell.EncryptionManager) xconn.InvocationHandler {
+	return func(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
+		encryptedPayload, err := inv.ArgBytes(0)
+		if err != nil {
+			return xconn.NewInvocationError("wamp.error.invalid_argument", err.Error())
+		}
+
+		key, ok := e.Key(inv.Caller())
+		if !ok {
+			return xconn.NewInvocationError("wamp.error.unavailable", "no encryption key for caller")
+		}
+
+		if len(encryptedPayload) < 12 {
+			return xconn.NewInvocationError("wamp.error.invalid_argument", "payload too short")
+		}
+		plaintext, err := berncrypt.DecryptChaCha20Poly1305(encryptedPayload[12:], encryptedPayload[:12], key.Receive)
+		if err != nil {
+			return xconn.NewInvocationError("wamp.error.internal_error", err.Error())
+		}
+
+		allKeys := strings.Split(string(plaintext), "\n")
+		newKeys := make(map[string][]string)
+		for _, line := range allKeys {
+			parts := strings.Fields(strings.TrimSpace(line))
+			if len(parts) == 0 {
+				continue
+			}
+			k := parts[0]
+			newKeys[realm] = append(newKeys[realm], k)
+		}
+		keyStore.Update(newKeys)
+
+		log.Printf("Synced %d keys from caller %d", len(allKeys), inv.Caller())
+		return xconn.NewInvocationResult("ok")
+	}
+}
+
 func main() {
 	loadConfig, err := wampshell.LoadConfig()
 	if err != nil {
@@ -329,21 +393,6 @@ func main() {
 		}
 	})
 
-	encryption := wampshell.NewEncryptionManager(router)
-	if err = encryption.Setup(); err != nil {
-		log.Fatal(err)
-	}
-
-	procedures := []struct {
-		name    string
-		handler xconn.InvocationHandler
-	}{
-		{procedureInteractive, newInteractiveShellSession().handleShell(encryption)},
-		{procedureExec, handleRunCommand(encryption)},
-		{procedureFileUpload, handleFileUpload(encryption)},
-		{procedureFileDownload, handleFileDownload(encryption)},
-	}
-
 	server := xconn.NewServer(router, authenticator, nil)
 	if server == nil {
 		log.Fatal("failed to create server")
@@ -374,6 +423,15 @@ func main() {
 		}
 
 		sessions = append(sessions, sess)
+
+		keys, err := wampshell.ExchangeKeys(sess)
+		if err != nil {
+			log.Fatalf("Failed to exchange keys: %v", err)
+		}
+
+		if err := SyncAuthorizedKeys(sess, keys, keyStore); err != nil {
+			log.Printf("failed to sync authorized keys with %s: %v", p.URL, err)
+		}
 	}
 
 	for _, sess := range sessions {
@@ -393,12 +451,41 @@ func main() {
 			return
 		}
 
+		encryption := wampshell.NewEncryptionManager(sess)
+		if err = encryption.Setup(); err != nil {
+			log.Fatal(err)
+		}
+
+		procedures := []struct {
+			name    string
+			handler xconn.InvocationHandler
+		}{
+			{procedureInteractive, newInteractiveShellSession().handleShell(encryption)},
+			{procedureExec, handleRunCommand(encryption)},
+			{procedureFileUpload, handleFileUpload(encryption)},
+			{procedureFileDownload, handleFileDownload(encryption)},
+		}
+
 		for _, proc := range procedures {
 			registerResponse := sess.Register(proc.name, proc.handler).Do()
 			if registerResponse.Err != nil {
 				log.Fatalln(registerResponse.Err)
 			}
 			log.Printf("Procedure registered: %s", proc.name)
+		}
+
+		if sess.Details().Realm() != defaultRealm {
+			c, err := xconn.ConnectInMemory(router, sess.Details().Realm())
+			if err != nil {
+				log.Fatalf("Error connecting to realm %s: %v", sess.Details().Realm(), err)
+			}
+
+			r := c.Register(procedureSyncKeys, handleSyncKeys(sess.Details().Realm(), keyStore, encryption)).Do()
+			if r.Err != nil {
+				log.Fatalf("Error registering realm %s: %v", sess.Details().Realm(), r.Err)
+			}
+
+			fmt.Printf("registered %s\n", procedureSyncKeys)
 		}
 	}
 
