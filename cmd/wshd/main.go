@@ -320,7 +320,7 @@ func SyncAuthorizedKeys(session *xconn.Session, keys *wampshell.KeyPair, keyStor
 	return nil
 }
 
-func handleSyncKeys(keyStore *wampshell.KeyStore, e *wampshell.EncryptionManager) xconn.InvocationHandler {
+func handleSyncKeys(realm string, keyStore *wampshell.KeyStore, e *wampshell.EncryptionManager) xconn.InvocationHandler {
 	return func(_ context.Context, inv *xconn.Invocation) *xconn.InvocationResult {
 		encryptedPayload, err := inv.ArgBytes(0)
 		if err != nil {
@@ -348,10 +348,6 @@ func handleSyncKeys(keyStore *wampshell.KeyStore, e *wampshell.EncryptionManager
 				continue
 			}
 			k := parts[0]
-			realm := "wampshell"
-			if len(parts) > 1 {
-				realm = parts[1]
-			}
 			newKeys[realm] = append(newKeys[realm], k)
 		}
 		keyStore.Update(newKeys)
@@ -409,7 +405,22 @@ func main() {
 		{procedureExec, handleRunCommand(encryption)},
 		{procedureFileUpload, handleFileUpload(encryption)},
 		{procedureFileDownload, handleFileDownload(encryption)},
-		{procedureSyncKeys, handleSyncKeys(keyStore, encryption)},
+	}
+
+	for realm := range authenticator.Realms() {
+		if realm != defaultRealm {
+			c, err := xconn.ConnectInMemory(router, realm)
+			if err != nil {
+				log.Fatalf("Error connecting to realm %s: %v", realm, err)
+			}
+
+			r := c.Register(procedureSyncKeys, handleSyncKeys(realm, keyStore, encryption)).Do()
+			if r.Err != nil {
+				log.Fatalf("Error registering realm %s: %v", realm, r.Err)
+			}
+
+			fmt.Printf("registered %s\n", procedureSyncKeys)
+		}
 	}
 
 	server := xconn.NewServer(router, authenticator, nil)
